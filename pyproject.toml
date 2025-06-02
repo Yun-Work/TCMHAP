@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "TEST"
+name = "TCMHAP"
 version = "0.1.0"
-description = "範例專案，只用來安裝相依套件，不需要打包成 library"
+description = "畢業專題-中醫健康分析後端(Python程式)"
 authors = ["Your Name <youremail@example.com>"]
 license = "MIT"
 package-mode = false
