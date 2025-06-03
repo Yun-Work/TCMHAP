@@ -88,6 +88,21 @@ files = [
 markers = {main = "platform_system == \"Windows\"", dev = "platform_system == \"Windows\" or sys_platform == \"win32\""}
 
 [[package]]
+name = "dlib"
+version = "19.24.1"
+description = "A toolkit for making real world machine learning and data analysis applications"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "dlib-19.24.1-cp311-cp311-win_amd64.whl", hash = "sha256:6f1a5ee167975d7952b28e0ce4495f1d9a77644761cf5720fb66d7c6188ae496"},
+]
+
+[package.source]
+type = "file"
+url = "libs/dlib-19.24.1-cp311-cp311-win_amd64.whl"
+
+[[package]]
 name = "exceptiongroup"
 version = "1.3.0"
 description = "Backport of PEP 654 (exception groups)"
@@ -556,4 +571,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "c0b4079411986411d31bb16369c462b1fbe7530bfe6d06d60185534000ccb2c4"
+content-hash = "9578a4e52c54080cdf7a9291d004fd75361bde1ee3659ac22be7c410374d7ff5"
