@@ -39,3 +39,8 @@
 # Poetry 使用介紹
 ## 新增套件
     poetry add 套件名稱
+## 新增.whl套件
+1. 將檔案放置於libs資料夾下   
+![img.png](libs/README_PIC/add_step1.png)
+2. 點選右下角工具列中Terminal終端，輸入新增套件的指令
+![img_2.png](libs/README_PIC/add_step2.png)
