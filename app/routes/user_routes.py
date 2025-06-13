@@ -3,6 +3,10 @@ from app.services.user_service import get_all_users, add_user
 
 user_bp = Blueprint('user_bp', __name__)
 
+@user_bp.route('/status', methods=['GET'])
+def list_users():
+    return "Python專案正常運行中", 200
+
 @user_bp.route('/', methods=['GET'])
 def list_users():
     return jsonify(get_all_users())
