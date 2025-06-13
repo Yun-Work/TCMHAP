@@ -5,7 +5,7 @@ user_bp = Blueprint('user_bp', __name__)
 
 @user_bp.route('/status', methods=['GET'])
 def status():
-    return "Python專案正常運行中", 200
+    return 200
 
 @user_bp.route('/', methods=['GET'])
 def list_users():
