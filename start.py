@@ -91,25 +91,13 @@ def main():
         print("── 發現系統已安裝 Poetry，跳過安裝步驟。")
     else:
         # 下載並安裝 Poetry
-        tmp_dir = tempfile.gettempdir()
-        installer_path = os.path.join(tmp_dir, "install-poetry.py")
-
-        download_poetry_installer(installer_path)
-        run_poetry_installer(installer_path)
-
-        # 刪除暫存安裝腳本
-        try:
-            os.remove(installer_path)
-        except:
-            pass
-
-        print(">>> Poetry 安裝完成！")
-        print(">>> 請關閉並重新開啟終端，以讓 'poetry' 命令生效。")
+        print("\n── 執行 `pip install poetry`……")
+        run_shell_command(["pip", "install", "poetry"], "pip install poetry 執行失敗")
         pause()
 
     # 3. 切換到此 Python 腳本所在資料夾
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
+    # script_dir = os.path.dirname(os.path.abspath(__file__))
+    # os.chdir(script_dir)
 
     # 4. 執行 poetry lock / install / run
     print("\n── 執行 `poetry lock`……")
