@@ -10,8 +10,10 @@ package-mode = false
 python = ">=3.10,<4.0"
 flask = "^3.1.1"
 opencv-python = "^4.11.0.86"
-numpy = "^2.2.6"
-dlib = {path = "libs/dlib-19.24.1-cp311-cp311-win_amd64.whl"}
+numpy = "1.26.4"
+dlib = { path = "libs/dlib-19.24.1-cp311-cp311-win_amd64.whl" }
+
+
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
