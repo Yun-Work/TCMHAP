@@ -30,15 +30,6 @@
 # Poetry 使用介紹
 ## 新增套件
     poetry add 套件名稱
-# 專案啟動方式
-## 1. 設定啟動參數
-![img.png](libs/README_PIC/step1.png)
-## 2. Run start.py
-![img.png](libs/README_PIC/step2.png)
-
-# Poetry 使用介紹
-## 新增套件
-    poetry add 套件名稱
 ## 新增.whl套件
 1. 將檔案放置於libs資料夾下   
 ![img.png](libs/README_PIC/add_step1.png)
