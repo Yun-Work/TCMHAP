@@ -1,3 +1,6 @@
+import os
+import tempfile
+
 import dlib
 import cv2
 import numpy as np
@@ -51,7 +54,7 @@ def draw_vertical_segments(img, pt1_idx, pt2_idx, color, label_prefix, raw_img=N
     segment_height = box_height // 3
 
     rois = []
-    labels=[]
+
     for i in range(3):
         seg_top = top_left[1] + i * segment_height
         seg_bottom = seg_top + segment_height if i < 2 else bottom_right[1]
@@ -132,9 +135,7 @@ def detect_and_process_faces(img_path):
         if nose_root:
             region_list.append(nose_root)
 
-    cv2.imshow("標記結果", img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+
     return img,region_list
 
 # ---------- 圖像格狀分析 ---------- #
@@ -179,6 +180,29 @@ def grid_analysis(image, name='unnamed'):
         'dark_blocks': replace_img
     }
 
+def main(request):
+    if 'image' not in request.files:
+        return 'No image uploaded', 400
+    image_bytes = request.files['image'].read()
+
+
+    # 將 image_bytes 寫入暫存檔案
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+        temp_file.write(image_bytes)
+        temp_path = temp_file.name
+
+    try:
+        # 呼叫你的核心處理函式
+        final_img, regions = detect_and_process_faces(temp_path)
+
+        # 儲存處理後圖像至 Bytes
+        if final_img is None:
+            return None
+
+        _, buffer = cv2.imencode('.png', final_img)
+        return final_img
+    finally:
+        os.remove(temp_path)
 
 
 
