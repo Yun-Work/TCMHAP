@@ -8,6 +8,12 @@ from typing import Dict, Tuple, List, Optional, Union
 import json
 
 
+#使用方法
+    #1. 完整分析：TCMFaceAnalysisIntegrator().analyze_patient_face(base64_image)
+    #2. 簡化分析：SimpleFaceAnalysisAPI().analyze(base64_image)
+    #3. 基礎分析：FaceSkinAnalyzerAPI().analyze_face_from_base64(base64_image)
+
+
 class FaceRegion(Enum):
     """面部區域定義"""
     FOREHEAD_TOP = "額頭上區"
@@ -1056,5 +1062,6 @@ class SimpleFaceAnalysisAPI:
         }
 
         return simplified
+
 
 
