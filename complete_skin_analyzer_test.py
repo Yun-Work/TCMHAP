@@ -8,6 +8,18 @@ from typing import Dict, Tuple, List, Optional
 import json
 
 
+# 方式1：從base64字符串分析
+# result = analyze_face_from_base64(base64_string)
+
+# 方式2：從文件分析
+# result = analyze_face_from_file("image.jpg")
+
+# 方式3：使用類實例
+# analyzer = FaceSkinAnalyzer()
+# result = analyzer.analyze_from_base64(base64_string)
+
+
+
 class FaceRegion(Enum):
     """面部區域定義"""
     FOREHEAD_TOP = "額頭上區"
@@ -730,4 +742,3 @@ if __name__ == "__main__":
 
 
 
-    
