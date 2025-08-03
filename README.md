@@ -1,5 +1,15 @@
 # TCMHAP
 畢業專題-中醫健康分析後端(Python程式)
+
+## 檔案命名
+所有檔案命名請用小寫，不要用大寫
+
+功能名稱跟資料夾之間用底線_來分隔
+
+功能名稱_資料夾.py 例如: hologram_routes.py
+
+
+
 # [GitHub](https://github.com/Yun-Work/TCMHAP "Google's Homepage") 專案流程
 下述以個人yun branch進行介紹(先確認已切換到個人branch)
 1. 點選左方工具列中Commit工具(快捷鍵Alt+0)     

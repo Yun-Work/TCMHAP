@@ -1,7 +1,8 @@
-import os
-
-class Config:
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        "DATABASE_URL", "sqlite:///app.db"
-    )
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+# app/config.py
+MYSQL_CONFIG = {
+    "host": "10.8.0.1",
+    "user": "TCMHA",
+    "password": "!QAZ2wsx#EDC",
+    "database": "tcnha",
+    "charset": "utf8mb4"
+}
