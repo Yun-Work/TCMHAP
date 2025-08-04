@@ -1,8 +1,8 @@
 # app/config.py
 MYSQL_CONFIG = {
     "host": "10.8.0.1",
-    "user": "TCMHA",
+    "user": "system",
     "password": "!QAZ2wsx#EDC",
-    "database": "tcnha",
+    "database": "tcmha",
     "charset": "utf8mb4"
 }
