@@ -89,7 +89,7 @@ def draw_square_on_point(img, point_index, color, label, raw_img=None, landmarks
 
 # ---------- 臉部偵測與處理 ---------- #
 def detect_and_process_faces(img_path):
-    predictor_path = "C:/Users/Yun/PycharmProjects/PythonProject/shape_predictor_68_face_landmarks.dat"#dlid套件
+    predictor_path = "libs/shape_predictor_68_face_landmarks.dat"#dlid套件
     region_list = []
     detector = dlib.get_frontal_face_detector()
     predictor = dlib.shape_predictor(predictor_path)
