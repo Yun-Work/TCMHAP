@@ -7,3 +7,6 @@ DATABASE_URL = f"mysql+pymysql://{MYSQL_CONFIG['user']}:{MYSQL_CONFIG['password'
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 建立並回傳一個新的資料庫 Session 實例
+def get_db_session():
+    return SessionLocal()
