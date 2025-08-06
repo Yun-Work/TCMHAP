@@ -3,7 +3,7 @@ import re
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 from app.db import SessionLocal
-from app.models import User
+from app.models.user_model import User
 
 def is_valid_password(password):
     return (
