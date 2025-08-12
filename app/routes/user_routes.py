@@ -4,7 +4,7 @@ from app.services.user_service import get_all_users, add_user
 from app.services.hologram_service import main
 from app.services.register_user_service import register_user
 from app.services.login_service import login_user
-from app.services.user_profile_service import user_profile
+from app.services.user_profile_service import upsert_user_profile
 
 user_bp = Blueprint('user_bp', __name__)
 
@@ -25,14 +25,13 @@ def create_user():
 @user_bp.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
-    name = data.get('name')
     email = data.get('email')
     password = data.get('password')
 
-    if not all([name, email, password]):
+    if not all([email, password]):
         return jsonify({'error': '所有欄位都必填'}), 400
 
-    result = register_user(name, email, password)
+    result = register_user(email, password)
     if 'error' in result:
         return jsonify(result), 400
     return jsonify(result), 201
@@ -54,17 +53,9 @@ def login():
 def update_profile():
     data = request.get_json()
     user_id = data.get('user_id')
+    full_name = data.get('full_name')
     gender = data.get('gender')
-    birth_date = data.get('birth_date')  # e.g., "2004-01-31"
+    birth_date = data.get('birth_date')
 
-    if not user_id or not gender or not birth_date:
-        return jsonify({'message': '請填寫完整的欄位'}), 400
-
-    from datetime import datetime
-    try:
-        birth_date_obj = datetime.strptime(birth_date, "%Y-%m-%d").date()
-    except ValueError:
-        return jsonify({'message': '生日格式錯誤，需為 YYYY-MM-DD'}), 400
-
-    result = user_profile(user_id, gender, birth_date_obj)
-    return jsonify(result), 200 if result['success'] else 400
+    result = upsert_user_profile(user_id, full_name, gender, birth_date)
+    return jsonify(result)

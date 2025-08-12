@@ -12,7 +12,7 @@ def is_valid_password(password):
         re.search(r'[0-9]', password)
     )
 
-def register_user(name, email, password):
+def register_user(email, password):
     if not is_valid_password(password):
         return {"error": "密碼格式錯誤：至少6碼，含英文與數字"}
 
@@ -24,7 +24,7 @@ def register_user(name, email, password):
             return {"error": "Email 已被註冊"}
 
         hashed_pw = generate_password_hash(password)
-        new_user = User(name=name, email=email, password=hashed_pw)
+        new_user = User(email=email, password=hashed_pw)
         session.add(new_user)
         session.commit()
         return {"success": "註冊成功", "user_id": new_user.user_id}
