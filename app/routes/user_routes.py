@@ -1,10 +1,8 @@
 # app/routers/user_router.py
 
 from flask import Blueprint, request, jsonify
-
 from app.db import get_db_session  # 取得 SQLAlchemy session
-from app.services.user_service import send_verification_code, verify_code
-
+from app.services.user_service import send_verification_code, verify_code, reset_password_with_code
 
 user_bp = Blueprint('user_bp', __name__)
 
@@ -45,6 +43,29 @@ def verify():
     try:
         if verify_code(session, email, code):
             return jsonify({"message": "驗證成功"}), 200
+        else:
+            return jsonify({"error": "驗證碼錯誤或已過期"}), 400
+    finally:
+        session.close()
+
+# 重設密碼
+@user_bp.route('/reset_password', methods=['POST'])
+def reset_password():
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    code = data.get("code")
+    new_password = data.get("new_password")
+
+    if not email or not code or not new_password:
+        return jsonify({"error": "缺少必要參數"}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "密碼至少 6 碼"}), 400
+
+    session = get_db_session()
+    try:
+        ok = reset_password_with_code(session, email, code, new_password)
+        if ok:
+            return jsonify({"message": "密碼已重設"}), 200
         else:
             return jsonify({"error": "驗證碼錯誤或已過期"}), 400
     finally:

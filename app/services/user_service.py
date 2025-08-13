@@ -3,9 +3,12 @@
 import random
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from werkzeug.security import generate_password_hash
+
 from app.models.user_model import User
 from app.models.verifycode_model import VerifyCode
 from app.utils.mail_util import send_email
+
 
 
 #產生驗證碼
@@ -32,9 +35,6 @@ def send_verification_code(session: Session, email: str, status: str) -> bool:
         print("未知的驗證狀態")
         return False
 
-    # 清除此 email 的舊驗證碼（無論過期與否都可刪）
-    session.query(VerifyCode).filter(VerifyCode.email == email).delete()
-    session.commit()
 
     code = generate_code()
     expires = datetime.utcnow() + timedelta(minutes=10)
@@ -53,13 +53,24 @@ def send_verification_code(session: Session, email: str, status: str) -> bool:
 
 #驗證使用者輸入的驗證碼是否正確且未過期
 def verify_code(session: Session, email: str, code: str) -> bool:
-    # 清除所有過期的驗證碼
-    session.query(VerifyCode).filter(VerifyCode.expires_at < datetime.utcnow()).delete()
-    session.commit()
 
     record = session.query(VerifyCode).filter_by(email=email, code=code).first()
     if record and record.expires_at > datetime.utcnow():
-        session.delete(record)  # 通過後就刪除
-        session.commit()
         return True
     return False
+
+
+# 重設密碼
+def reset_password_with_code(session: Session, email: str, code: str, new_password: str) -> bool:
+
+    # 找使用者並設定新密碼（雜湊）
+    user = session.query(User).filter_by(email=email).first()
+    if not user:
+        print("找不到使用者")
+        return False
+
+    user.password = generate_password_hash(new_password)
+    session.add(user)
+
+    session.commit()
+    return True
