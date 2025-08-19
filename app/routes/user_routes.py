@@ -28,10 +28,27 @@ def register():
         email=data.get("email"),
         password=data.get("password"),
         name=data.get("name"),
-        gender=data.get("gender"),  # "男生"/"女生" 或 "male"/"female"
-        birth_date_val=data.get("birth_date")  # "YYYY-MM-DD"
+        gender=data.get("gender"),  # 前端傳「男生 / 女生」
+        birth_date_val=data.get("birth_date")  # 前端傳 "YYYY/MM/DD"
     )
-    return jsonify(res)
+    # 依結果決定 HTTP 狀態碼
+    if res.get("success") is True:
+        # 成功：201 Created
+        return jsonify(res), 201
+
+    # 失敗情境 → 以 message / 內容判斷更精準的狀態碼
+    msg = (res.get("message") or "").lower()
+    # 建議你在 service 也加上一個 code，例如 "EMAIL_TAKEN"
+    code = res.get("code")
+
+    if code == "EMAIL_TAKEN" or "已被註冊" in msg or "已存在" in msg:
+        return jsonify({"success": False, "code": "EMAIL_TAKEN", "message": res.get("message")}), 409
+
+    if "格式" in msg or "缺少" in msg or "不合法" in msg:
+        return jsonify({"success": False, "code": "BAD_REQUEST", "message": res.get("message")}), 400
+
+    # 其他未分類錯誤（資料庫或內部錯誤）
+    return jsonify({"success": False, "code": "SERVER_ERROR", "message": res.get("message")}), 500
 #登入API
 @user_bp.route('/login', methods=['POST'])
 def login():

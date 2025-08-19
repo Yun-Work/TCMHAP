@@ -1,6 +1,6 @@
 # app/services/register_user_service.py
 import re
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import generate_password_hash
 from app.db import SessionLocal
@@ -42,13 +42,14 @@ def register_user(email: str,
     if birth_date_val is not None:
         if isinstance(birth_date_val, str):
             try:
-                bdate = date.fromisoformat(birth_date_val)  # 'YYYY-MM-DD'
+                # ✅ 支援 "YYYY/MM/DD"
+                bdate = datetime.strptime(birth_date_val, "%Y/%m/%d").date()
             except ValueError:
-                return {"success": False, "message": "birth_date 格式需為 YYYY-MM-DD"}
+                return {"success": False, "message": "birth_date 格式需為 YYYY/MM/DD"}
         elif isinstance(birth_date_val, date):
             bdate = birth_date_val
         else:
-            return {"success": False, "message": "birth_date 需為字串 YYYY-MM-DD 或 date 物件"}
+            return {"success": False, "message": "birth_date 需為字串 YYYY/MM/DD 或 date 物件"}
 
     hashed_pw = generate_password_hash(password)
 
