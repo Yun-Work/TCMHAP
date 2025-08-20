@@ -1,7 +1,7 @@
 import re
 from app.db import SessionLocal
 from werkzeug.security import check_password_hash
-from app.models.user_model import User
+from app.models import User
 
 
 def is_valid_email(email):
@@ -31,12 +31,14 @@ def login_user(email, password):
 
         if user and check_password_hash(user.password, password):
             return {
-                'success': True,
-                'message': '登入成功',
-                'user': {
-                    'user_id': user.user_id,
-                    'name': user.name,
-                    'email': user.email
+                "success": True,
+                "message": "登入成功",
+                "user": {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "name": user.profile.full_name if user.profile else None,
+                    "gender": user.profile.gender if user.profile else None,
+                    "birth_date": user.profile.birth_date.isoformat() if user.profile and user.profile.birth_date else None
                 }
             }
         else:
