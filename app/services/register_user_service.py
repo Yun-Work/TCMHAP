@@ -4,7 +4,7 @@ from datetime import date, datetime
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import generate_password_hash
 from app.db import SessionLocal
-from app.models.user_model import User
+from app.models.users_model import User
 
 def is_valid_password(password: str) -> bool:
     return (

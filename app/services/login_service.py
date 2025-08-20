@@ -1,7 +1,7 @@
 import re
 from app.db import SessionLocal
 from werkzeug.security import check_password_hash
-from app.models import User
+from app.models.users_model import User
 
 
 def is_valid_email(email):
