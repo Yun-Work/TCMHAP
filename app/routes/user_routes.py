@@ -42,10 +42,10 @@ def register():
     code = res.get("code")
 
     if code == "EMAIL_TAKEN" or "已被註冊" in msg or "已存在" in msg:
-        return jsonify({"success": False, "code": "EMAIL_TAKEN", "message": res.get("message")}), 409
+        return jsonify({"success": False, "code": "EMAIL_TAKEN", "message":"已被註冊"}), 200
 
     if "格式" in msg or "缺少" in msg or "不合法" in msg:
-        return jsonify({"success": False, "code": "BAD_REQUEST", "message": res.get("message")}), 400
+        return jsonify({"success": False, "code": "BAD_REQUEST", "message": "格式錯誤"}), 200
 
     # 其他未分類錯誤（資料庫或內部錯誤）
     return jsonify({"success": False, "code": "SERVER_ERROR", "message": res.get("message")}), 500
