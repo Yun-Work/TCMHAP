@@ -23,4 +23,3 @@ def hologram():
     # 回傳 HTML 內容(測試)
     # html_img_tag = f'<img src="data:image/jpeg;base64,{img_base64}" />'
     # return Response(html_img_tag, mimetype='text/html')
-
