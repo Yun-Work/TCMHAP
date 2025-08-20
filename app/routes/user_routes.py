@@ -2,7 +2,6 @@ import cv2
 import json
 import base64
 from flask import Blueprint, request, jsonify, send_file
-from app.services.user_service import get_all_users, add_user
 from app.services.hologram_service import main
 import re
 from app.services.login_service import login_user

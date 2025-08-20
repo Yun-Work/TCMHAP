@@ -16,3 +16,6 @@ if __name__ == "__main__":
             print("✅ 資料庫連線成功！")
     except Exception as e:
         print("❌ 資料庫連線失敗：", e)
+# 建立並回傳一個新的資料庫 Session 實例
+def get_db_session():
+    return SessionLocal()
