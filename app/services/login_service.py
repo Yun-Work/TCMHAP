@@ -36,9 +36,9 @@ def login_user(email, password):
                 "user": {
                     "user_id": user.user_id,
                     "email": user.email,
-                    "name": user.profile.full_name if user.profile else None,
-                    "gender": user.profile.gender if user.profile else None,
-                    "birth_date": user.profile.birth_date.isoformat() if user.profile and user.profile.birth_date else None
+                    "name": user.name,
+                    "gender": user.gender,
+                    "birth_date": user.birth_date.isoformat() if user.birth_date else None
                 }
             }
         else:
