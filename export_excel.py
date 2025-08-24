@@ -5,6 +5,7 @@ from openpyxl.styles import PatternFill
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
 from app.db import engine
+import os
 
 # SQL：展開 JSON 陣列 → 月份 × 器官 次數
 SQL = text("""
@@ -61,16 +62,20 @@ def main():
         # 右側圖例
         legend_col = end_col + 2
         lc, lc2 = get_column_letter(legend_col), get_column_letter(legend_col + 1)
-        ws[f"{lc}{start_row}"] = "色碼"
-        ws[f"{lc2}{start_row}"] = "說明"
         ws[f"{lc}{start_row+1}"].fill = green
-        ws[f"{lc2}{start_row+1}"] = "綠色 (=0)：無症狀紀錄，狀態穩定"
+        ws[f"{lc2}{start_row+1}"] = "綠色(0次):無症狀紀錄，狀態穩定"
         ws[f"{lc}{start_row+2}"].fill = yellow
-        ws[f"{lc2}{start_row+2}"] = "黃色 (1–3)：輕度症狀出現，建議觀察追蹤"
+        ws[f"{lc2}{start_row+2}"] = "黃色(1–3次):輕度症狀出現，建議觀察追蹤"
         ws[f"{lc}{start_row+3}"].fill = red
-        ws[f"{lc2}{start_row+3}"] = "紅色 (≥4)：症狀較頻繁，建議深入檢查或諮詢醫師"
+        ws[f"{lc2}{start_row+3}"] = "紅色(≥4次):症狀較頻繁，建議深入檢查或諮詢醫師"
 
     print(f"已匯出 Excel：{output}")
+    # 自動打開 Excel 檔
+    abs_path = os.path.abspath(output)
+    try:
+        os.startfile(abs_path)
+    except Exception as e:
+        print(f"無法自動開啟 Excel：{abs_path}")
 
 if __name__ == "__main__":
     main()
