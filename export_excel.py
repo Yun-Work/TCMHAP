@@ -63,11 +63,11 @@ def main():
         legend_col = end_col + 2
         lc, lc2 = get_column_letter(legend_col), get_column_letter(legend_col + 1)
         ws[f"{lc}{start_row+1}"].fill = green
-        ws[f"{lc2}{start_row+1}"] = "綠色 (0次)：無症狀紀錄，狀態穩定"
+        ws[f"{lc2}{start_row+1}"] = "綠色(0次):無症狀紀錄，狀態穩定"
         ws[f"{lc}{start_row+2}"].fill = yellow
-        ws[f"{lc2}{start_row+2}"] = "黃色 (1–3次)：輕度症狀出現，建議觀察追蹤"
+        ws[f"{lc2}{start_row+2}"] = "黃色(1–3次):輕度症狀出現，建議觀察追蹤"
         ws[f"{lc}{start_row+3}"].fill = red
-        ws[f"{lc2}{start_row+3}"] = "紅色 (≥4次)：症狀較頻繁，建議深入檢查或諮詢醫師"
+        ws[f"{lc2}{start_row+3}"] = "紅色(≥4次):症狀較頻繁，建議深入檢查或諮詢醫師"
 
     print(f"已匯出 Excel：{output}")
     # 自動打開 Excel 檔
