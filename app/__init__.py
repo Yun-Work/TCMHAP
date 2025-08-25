@@ -8,4 +8,6 @@ def create_app():
     app.register_blueprint(user_bp, url_prefix='/api/users')
     app.register_blueprint(hologram_bp, url_prefix='/api/holograms')
     app.register_blueprint(face_analysis_bp, url_prefix='/api/face')
+    from app.routes.export_routes import export_bp
+    app.register_blueprint(export_bp)
     return app
