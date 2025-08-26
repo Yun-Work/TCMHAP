@@ -15,16 +15,16 @@ import functools
 
 
 class FaceRegion(Enum):
-    HEART = "心(額上1/3髮際)"          # 額上1/3髮際、鼻根
-    LUNG = "肺(眉間/印堂)"           # 眉間（印堂）、右上頰
-    LIVER = "肝(鼻樑中段)"          # 鼻樑中段、左上頰
-    GALLBLADDER = "膽(鼻樑外側高處)"    # 鼻樑外側高處、左上頰外緣
-    SPLEEN = "脾(鼻頭)"         # 鼻頭
-    STOMACH = "胃(鼻翼)"        # 鼻翼 [統一，不分左右]
-    SMALL_INTESTINE = "小腸(顴骨下方內側)"  # 顴骨下方內側（雙側）
-    LARGE_INTESTINE = "大腸(顴骨下方外側)"  # 顴骨下方外側（雙側）
-    KIDNEY = "腎(太陽穴垂直下至耳垂交界)"         # 太陽穴垂直下至耳垂交界、下頰
-    REPRODUCTIVE = "⼦宮/前列腺(下頰、人中)" # 下頰、人中
+    HEART = "心"          # 額上1/3髮際、鼻根
+    LUNG = "肺"           # 眉間（印堂）、右上頰
+    LIVER = "肝"          # 鼻樑中段、左上頰
+    GALLBLADDER = "膽"    # 鼻樑外側高處、左上頰外緣
+    SPLEEN = "脾"         # 鼻頭
+    STOMACH = "胃"        # 鼻翼 [統一，不分左右]
+    SMALL_INTESTINE = "小腸"  # 顴骨下方內側（雙側）
+    LARGE_INTESTINE = "大腸"  # 顴骨下方外側（雙側）
+    KIDNEY = "腎"         # 太陽穴垂直下至耳垂交界、下頰
+    REPRODUCTIVE = "⼦宮/前列腺" # 下頰、人中
 
     # 特殊診斷區域
     EYE_WHITE = "眼白"    # 肝膽代謝特例 [統一，不分左右]
