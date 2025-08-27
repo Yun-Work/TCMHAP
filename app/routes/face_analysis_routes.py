@@ -11,7 +11,8 @@ analysis_service = None
 diagnosis_service = None
 
 try:
-    from app.services.facialskincoloranalysis_service import analyze_face_from_base64
+    from app.services.facialskincoloranalysis_service import analyze_face_from_base64, FaceSkinAnalyzer
+
     analysis_service = analyze_face_from_base64
     print("✅ Blueprint: 成功導入分析服務")
 except ImportError as e:
@@ -22,6 +23,7 @@ try:
         get_all_diagnoses,
         format_diagnosis_text
     )
+
     diagnosis_service = {
         'get_all_diagnoses': get_all_diagnoses,
         'format_diagnosis_text': format_diagnosis_text
@@ -46,7 +48,7 @@ def upload_and_analyze():
     print("🔍 Blueprint: 收到新的分析請求")
 
     try:
-        # ✅ 正確的請求驗證 - 與工作版本保持一致
+        # 正確的請求驗證
         if not request.is_json:
             return jsonify({
                 "success": False,
@@ -56,24 +58,29 @@ def upload_and_analyze():
                 "all_region_results": {},
                 "region_results": {},
                 "diagnoses": {},
-                "diagnosis_text": ""
+                "diagnosis_text": "",
+                "has_moles": False,
+                "mole_analysis": None
             }), 400
 
         data = request.get_json()
         if not data or 'image' not in data:
             return jsonify({
                 "success": False,
-                "error": "缺少image字段",  # ✅ 與工作版本一致的錯誤信息
+                "error": "缺少image字段",
                 "abnormal_count": 0,
                 "overall_color": None,
                 "all_region_results": {},
                 "region_results": {},
                 "diagnoses": {},
-                "diagnosis_text": ""
+                "diagnosis_text": "",
+                "has_moles": False,
+                "mole_analysis": None
             }), 400
 
         image_data = data['image']
-        print(f"📷 Blueprint: 圖片數據長度: {len(image_data)}")
+        remove_moles = data.get('remove_moles', False)  # 改為remove_moles
+        print(f"📷 Blueprint: 圖片數據長度: {len(image_data)}, 移除痣: {remove_moles}")
 
         # 檢查分析服務
         if analysis_service is None:
@@ -86,13 +93,28 @@ def upload_and_analyze():
                 "all_region_results": {},
                 "region_results": {},
                 "diagnoses": {},
-                "diagnosis_text": ""
+                "diagnosis_text": "",
+                "has_moles": False,
+                "mole_analysis": None
             })
 
-        # 執行分析 - 與工作版本完全相同的邏輯
+        # 執行分析（使用新的分析器）
         try:
             print("🚀 Blueprint: 開始分析...")
-            result = analysis_service(image_data)
+
+            # 使用FaceSkinAnalyzer的新方法
+            try:
+                analyzer = FaceSkinAnalyzer()
+                result = analyzer.analyze_from_base64(image_data, remove_moles)
+            except Exception as analyzer_error:
+                print(f"⚠️ Blueprint: 使用新分析器失敗，回退到舊分析器: {analyzer_error}")
+                # 回退到舊版本分析
+                result = analysis_service(image_data)
+                # 手動添加痣檢測相關欄位
+                result["has_moles"] = False
+                result["mole_analysis"] = {"mole_count": 0, "total_moles": 0}
+                result["moles_removed"] = False
+
             print(f"✅ Blueprint: 分析完成，成功: {result.get('success', False)}")
 
             if not result.get('success', False):
@@ -105,10 +127,12 @@ def upload_and_analyze():
                     "all_region_results": {},
                     "region_results": {},
                     "diagnoses": {},
-                    "diagnosis_text": ""
+                    "diagnosis_text": "",
+                    "has_moles": False,
+                    "mole_analysis": None
                 })
 
-            # 準備響應數據 - 與工作版本完全相同
+            # 準備響應數據（包含新欄位）
             response_data = {
                 "success": True,
                 "error": None,
@@ -118,16 +142,16 @@ def upload_and_analyze():
                 "region_results": result.get("region_results", {}),
                 "diagnoses": {},
                 "diagnosis_text": "",
-                "original_image": None,
-                "annotated_image": None,
-                "abnormal_only_image": None,
-                "grid_analysis": {
-                    "grid_image": None,
-                    "dark_blocks_image": None
-                }
+                # 痣檢測相關欄位
+                "has_moles": result.get("has_moles", False),
+                "mole_analysis": result.get("mole_analysis", {
+                    "mole_count": 0,
+                    "total_moles": 0
+                }),
+                "moles_removed": result.get("moles_removed", False)
             }
 
-            # 添加診斷（與工作版本相同的邏輯）
+            # 添加診斷
             region_results = result.get("region_results", {})
             if diagnosis_service and region_results:
                 try:
@@ -145,42 +169,35 @@ def upload_and_analyze():
                 response_data["diagnosis_text"] = "所有檢測區域膚色狀態正常，身體狀況良好"
             else:
                 print("⚠️ Blueprint: 診斷服務不可用")
-            # =========================
-            # 分析成功後，寫入 face_analysis 資料表
-            # =========================
-            try:
-                # 取得「異常器官」清單（region_results 已是只有異常）
-                abnormal_map = result.get("region_results") or {}
-                abnormal_organs = list(abnormal_map.keys())  # 例: ["肺","肝","胃"]
 
-                # 取得「正常器官」清單（用 all_region_results 扣掉異常），若沒有就存 None
+            # 寫入資料庫
+            try:
+                abnormal_map = result.get("region_results") or {}
+                abnormal_organs = list(abnormal_map.keys())
+
                 all_map = result.get("all_region_results") or {}
                 normal_organs = None
                 if all_map:
                     normal_organs = [k for k in all_map.keys() if k not in abnormal_map]
 
-                # 從請求取得 user_id（沒有登入就存 None；可依你實作改來源）
-                raw_uid = request.headers.get("X-User-Id")  # 例如 App 端送上來
+                raw_uid = request.headers.get("X-User-Id")
                 user_id = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
 
-                # 寫入 MySQL（organs/normal_organs 都是 JSON 欄位，直接塞 list）
                 if abnormal_organs or normal_organs:
                     with SessionLocal() as db:
                         row = FaceAnalysis(
                             user_id=user_id,
-                            organs=abnormal_organs if abnormal_organs else [],  # 至少存空陣列，避免 NULL
-                            normal_organs=normal_organs  # 允許 None
+                            organs=abnormal_organs if abnormal_organs else [],
+                            normal_organs=normal_organs
                         )
                         db.add(row)
                         db.commit()
                         print(f"🗄️ Blueprint: 已寫入 face_analysis，id={row.id}")
                 else:
-                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單（異常/正常皆空）。")
+                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單。")
 
             except Exception as e:
-                # 寫庫失敗時只記錄，不阻擋 API 回傳
                 print(f"⚠️ Blueprint: 寫入 face_analysis 失敗：{e}")
-            # =========================
 
             return jsonify(response_data)
 
@@ -195,7 +212,9 @@ def upload_and_analyze():
                 "all_region_results": {},
                 "region_results": {},
                 "diagnoses": {},
-                "diagnosis_text": ""
+                "diagnosis_text": "",
+                "has_moles": False,
+                "mole_analysis": None
             })
 
     except Exception as e:
@@ -209,7 +228,9 @@ def upload_and_analyze():
             "all_region_results": {},
             "region_results": {},
             "diagnoses": {},
-            "diagnosis_text": ""
+            "diagnosis_text": "",
+            "has_moles": False,
+            "mole_analysis": None
         }), 500
 
 
@@ -217,6 +238,41 @@ def upload_and_analyze():
 def analyze():
     """與 /upload 相同的功能，為了兼容性"""
     return upload_and_analyze()
+
+
+@face_analysis_bp.route('/analyze_face', methods=['POST'])
+def analyze_face():
+    """專門處理包含痣檢測的分析請求"""
+    try:
+        data = request.get_json()
+        base64_image = data.get('image')
+        remove_moles = data.get('remove_moles', False)
+
+        if not base64_image:
+            return jsonify({'success': False, 'error': '缺少圖像數據'}), 400
+
+        # 嘗試使用新的分析器
+        try:
+            analyzer = FaceSkinAnalyzer()
+            result = analyzer.analyze_from_base64(base64_image, remove_moles)
+        except Exception as e:
+            print(f"❌ 新分析器執行失敗: {e}")
+            # 如果新分析器失敗，使用舊的分析方式
+            if analysis_service:
+                result = analysis_service(base64_image)
+                # 手動添加痣檢測相關欄位
+                result["has_moles"] = False
+                result["mole_analysis"] = {"mole_count": 0, "total_moles": 0}
+                result["moles_removed"] = False
+            else:
+                return jsonify({'success': False, 'error': '分析服務不可用'}), 500
+
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ analyze_face錯誤: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'分析失敗: {str(e)}'}), 500
 
 
 @face_analysis_bp.route('/test-diagnosis', methods=['POST'])
