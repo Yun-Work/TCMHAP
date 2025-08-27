@@ -3,6 +3,16 @@
 根據PDF文檔內容，將面部區域膚色異常映射到對應的功能/病變導向
 """
 
+def extract_organ_name(region_with_location):
+    """
+    從包含位置資訊的區域名稱中提取純器官名稱
+    例如：'大腸(顴骨下方外側（雙側）)' -> '大腸'
+    """
+    if '(' in region_with_location:
+        return region_with_location.split('(')[0]
+    return region_with_location
+
+
 # 根據PDF文檔内容
 ORGAN_DIAGNOSIS_MAP = {
     "心": {
@@ -106,16 +116,20 @@ def get_all_diagnoses(region_results):
     根據所有異常區域返回完整的診斷結果
     
     Args:
-        region_results (dict): 異常區域字典，格式為 {器官: 狀態}
-    
+        region_results (dict): 異常區域字典，格式為 {器官(位置): 狀態}
+
     Returns:
-        dict: 診斷結果字典，格式為 {器官: 診斷描述}
+        dict: 診斷結果字典，格式為 {器官(位置): 診斷資訊}
     """
     diagnoses = {}
-    for organ, condition in region_results.items():
-        diagnosis = get_diagnosis(organ, condition)
+    for region_with_location, condition in region_results.items():
+        # 提取純器官名稱用於匹配
+        organ_name = extract_organ_name(region_with_location)
+        diagnosis = get_diagnosis(organ_name, condition)
+
         if diagnosis:
-            diagnoses[organ] = {
+            diagnoses[region_with_location] = {
+                "organ": organ_name,
                 "condition": condition,
                 "diagnosis": diagnosis
             }
