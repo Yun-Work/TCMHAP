@@ -158,34 +158,42 @@ def upload_and_analyze():
             else:
                 print("⚠️ Blueprint: 診斷服務不可用")
 
-            # 寫入資料庫
+            # =========================
+            # 分析成功後，寫入 face_analysis 資料表
+            # =========================
             try:
+                # 取得「異常器官」清單（region_results 已是只有異常）
                 abnormal_map = result.get("region_results") or {}
-                abnormal_organs = list(abnormal_map.keys())
+                abnormal_organs = list(abnormal_map.keys())  # 例: ["肺","肝","胃"]
 
+                # 取得「正常器官」清單（用 all_region_results 扣掉異常），若沒有就存 None
                 all_map = result.get("all_region_results") or {}
                 normal_organs = None
                 if all_map:
                     normal_organs = [k for k in all_map.keys() if k not in abnormal_map]
 
-                raw_uid = request.headers.get("X-User-Id")
+                # 從請求取得 user_id（沒有登入就存 None；可依你實作改來源）
+                raw_uid = request.headers.get("X-User-Id")  # 例如 App 端送上來
                 user_id = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
 
+                # 寫入 MySQL（organs/normal_organs 都是 JSON 欄位，直接塞 list）
                 if abnormal_organs or normal_organs:
                     with SessionLocal() as db:
                         row = FaceAnalysis(
                             user_id=user_id,
-                            organs=abnormal_organs if abnormal_organs else [],
-                            normal_organs=normal_organs
+                            organs=abnormal_organs if abnormal_organs else [],  # 至少存空陣列，避免 NULL
+                            normal_organs=normal_organs  # 允許 None
                         )
                         db.add(row)
                         db.commit()
                         print(f"🗄️ Blueprint: 已寫入 face_analysis，id={row.id}")
                 else:
-                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單。")
+                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單（異常/正常皆空）。")
 
             except Exception as e:
+                # 寫庫失敗時只記錄，不阻擋 API 回傳
                 print(f"⚠️ Blueprint: 寫入 face_analysis 失敗：{e}")
+            # =========================
 
             return jsonify(response_data)
 
