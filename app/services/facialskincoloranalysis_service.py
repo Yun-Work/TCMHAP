@@ -13,8 +13,6 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import threading
 import functools
 
-
-
 # 修改痣檢測服務的導入
 try:
     from app.services.mole_detection_service import MoleDetectionService
@@ -31,37 +29,20 @@ except ImportError as e:
         MoleDetectionService = None
         print(f"痣檢測服務導入失敗: {e}, {e2}")
 
-# 修改診斷服務的導入
-try:
-    from app.routes.diagnosis_mapping_route import get_all_diagnoses, format_diagnosis_text
-    DIAGNOSIS_AVAILABLE = True
-    print("診斷服務導入成功")
-except ImportError as e:
-    try:
-        from diagnosis_mapping_route import get_all_diagnoses, format_diagnosis_text
-        DIAGNOSIS_AVAILABLE = True
-        print("診斷服務導入成功（相對路徑）")
-    except ImportError as e2:
-        DIAGNOSIS_AVAILABLE = False
-        get_all_diagnoses = None
-        format_diagnosis_text = None
-        print(f"診斷服務導入失敗: {e}, {e2}")
-
 class FaceRegion(Enum):
-    HEART = "心"          # 額上1/3髮際、鼻根
-    LUNG = "肺"           # 眉間（印堂）、右上頰
-    LIVER = "肝"          # 鼻樑中段、左上頰
-    GALLBLADDER = "膽"    # 鼻樑外側高處、左上頰外緣
-    SPLEEN = "脾"         # 鼻頭
-    STOMACH = "胃"        # 鼻翼 [統一，不分左右]
-    SMALL_INTESTINE = "小腸"  # 顴骨下方內側（雙側）
-    LARGE_INTESTINE = "大腸"  # 顴骨下方外側（雙側）
-    KIDNEY = "腎"         # 太陽穴垂直下至耳垂交界、下頰
-    REPRODUCTIVE = "⼦宮/前列腺" # 下頰、人中
-
-    # 特殊診斷區域
-    EYE_WHITE = "眼白"    # 肝膽代謝特例 [統一，不分左右]
-
+    FOREHEAD_UPPER = "額上1/3"           # 心區
+    YINTANG = "印堂"                     # 肺區
+    NOSE_BRIDGE_MID = "鼻樑中段"         # 肝區
+    NOSE_BRIDGE_OUTER = "鼻樑外側高處"   # 膽區
+    NOSE_TIP = "鼻頭"                    # 脾區
+    NOSE_WING = "鼻翼"                   # 胃區
+    CHEEK_UPPER_LEFT = "左上頰"          # 肝區
+    CHEEK_UPPER_RIGHT = "右上頰"         # 肺區
+    ZYGOMATIC_INNER = "顴內"             # 小腸區
+    ZYGOMATIC_OUTER = "顴外"             # 大腸區
+    CHEEK_LOWER = "下頰"                 # 腎區
+    CHIN_PHILTRUM = "人中下巴"           # 生殖區
+    EYE_WHITE = "眼白"                   # 特殊區域（肝膽代謝）
 
 class SkinCondition(Enum):
     """膚色狀態定義"""
@@ -71,11 +52,6 @@ class SkinCondition(Enum):
     PALE = "發白"
     YELLOW = "發黃"
     CYAN = "發青"
-
-
-
-
-
 
 class FaceSkinAnalyzer:
     _instance = None
@@ -89,24 +65,24 @@ class FaceSkinAnalyzer:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-
-
     def __init__(self):
         if hasattr(self, '_initialized'):
             return
 
         self.region_locations = {
-            FaceRegion.HEART: "額上1/3髮際、鼻根",
-            FaceRegion.LUNG: "眉間（印堂）、右上頰",
-            FaceRegion.LIVER: "鼻樑中段、左上頰",
-            FaceRegion.GALLBLADDER: "鼻樑外側高處、左上頰外緣",
-            FaceRegion.SPLEEN: "鼻頭",
-            FaceRegion.STOMACH: "鼻翼",
-            FaceRegion.SMALL_INTESTINE: "顴骨下方內側",
-            FaceRegion.LARGE_INTESTINE: "顴骨下方外側",
-            FaceRegion.KIDNEY: "太陽穴垂直下至耳垂交界、下頰",
-            FaceRegion.REPRODUCTIVE: "下頰、人中",
-            FaceRegion.EYE_WHITE: "眼白"
+            FaceRegion.FOREHEAD_UPPER: "心",
+            FaceRegion.YINTANG: "肺",
+            FaceRegion.CHEEK_UPPER_RIGHT: "肺",
+            FaceRegion.NOSE_BRIDGE_MID: "肝",
+            FaceRegion.CHEEK_UPPER_LEFT: "肝",
+            FaceRegion.NOSE_BRIDGE_OUTER: "膽",
+            FaceRegion.NOSE_TIP: "脾",
+            FaceRegion.NOSE_WING: "胃",
+            FaceRegion.ZYGOMATIC_INNER: "小腸",
+            FaceRegion.ZYGOMATIC_OUTER: "大腸",
+            FaceRegion.CHEEK_LOWER: "腎",
+            FaceRegion.CHIN_PHILTRUM: "生殖",
+            FaceRegion.EYE_WHITE: "肝膽代謝"
         }
         self.face_app = None
         self.face_mesh = None
@@ -122,33 +98,36 @@ class FaceSkinAnalyzer:
 
     def _precompute_constants(self):
         """預計算常量以提高性能"""
-        # 預計算器官landmarks和裁剪尺寸
         self.organ_landmarks = {
-            FaceRegion.HEART: 10,  # 額上區域
-            FaceRegion.LUNG: 8,  # 眉間區域
-            FaceRegion.LIVER: 197,  # 鼻樑中段、左上頰
-            FaceRegion.GALLBLADDER: 4,  # 鼻樑外側高處
-            FaceRegion.SPLEEN: 168,  # 鼻頭
-            FaceRegion.STOMACH: 64,  # 鼻翼
-            FaceRegion.SMALL_INTESTINE: 294,  # 顴骨下方內側
-            FaceRegion.LARGE_INTESTINE: 330,  # 顴骨下方外側
-            FaceRegion.KIDNEY: 411,  # 太陽穴下至耳垂
-            FaceRegion.REPRODUCTIVE: 164,  # 下頰、人中
+            FaceRegion.FOREHEAD_UPPER: 10,  # 額上區域
+            FaceRegion.YINTANG: 8,  # 眉間區域
+            FaceRegion.NOSE_BRIDGE_MID: 197,  # 鼻樑中段
+            FaceRegion.CHEEK_UPPER_LEFT: 234,  # 左上頰
+            FaceRegion.CHEEK_UPPER_RIGHT: 454,  # 右上頰
+            FaceRegion.NOSE_BRIDGE_OUTER: 4,  # 鼻樑外側高處
+            FaceRegion.NOSE_TIP: 168,  # 鼻頭
+            FaceRegion.NOSE_WING: 64,  # 鼻翼
+            FaceRegion.ZYGOMATIC_INNER: 294,  # 顴骨下方內側
+            FaceRegion.ZYGOMATIC_OUTER: 330,  # 顴骨下方外側
+            FaceRegion.CHEEK_LOWER: 411,  # 下頰（太陽穴下至耳垂）
+            FaceRegion.CHIN_PHILTRUM: 164,  # 下巴、人中
             FaceRegion.EYE_WHITE: 33,  # 眼白區域
         }
 
         self.organ_crop_sizes = {
-            FaceRegion.HEART: (60, 40),  # 心：額上1/3區域
-            FaceRegion.LUNG: (40, 30),  # 肺：眉間區域
-            FaceRegion.LIVER: (35, 35),  # 肝：鼻樑中段、左上頰
-            FaceRegion.GALLBLADDER: (25, 25),  # 膽：鼻樑外側高處
-            FaceRegion.SPLEEN: (30, 25),  # 脾：鼻頭
-            FaceRegion.STOMACH: (25, 20),  # 胃：鼻翼
-            FaceRegion.SMALL_INTESTINE: (30, 25),  # 小腸：顴骨下方內側
-            FaceRegion.LARGE_INTESTINE: (30, 25),  # 大腸：顴骨下方外側
-            FaceRegion.KIDNEY: (40, 35),  # 腎：太陽穴下至耳垂
-            FaceRegion.REPRODUCTIVE: (35, 30),  # 生殖：下頰、人中
-            FaceRegion.EYE_WHITE: (25, 15),  # 眼白：鞏膜
+            FaceRegion.FOREHEAD_UPPER: (60, 40),  # 心：額上1/3區域
+            FaceRegion.YINTANG: (40, 30),  # 肺：眉間區域
+            FaceRegion.NOSE_BRIDGE_MID: (35, 35),  # 肝：鼻樑中段
+            FaceRegion.CHEEK_UPPER_LEFT: (35, 35),  # 肝：左上頰
+            FaceRegion.CHEEK_UPPER_RIGHT: (35, 35),  # 肺：右上頰
+            FaceRegion.NOSE_BRIDGE_OUTER: (25, 25),  # 膽：鼻樑外側高處
+            FaceRegion.NOSE_TIP: (30, 25),  # 脾：鼻頭
+            FaceRegion.NOSE_WING: (25, 20),  # 胃：鼻翼
+            FaceRegion.ZYGOMATIC_INNER: (30, 25),  # 小腸：顴骨下方內側
+            FaceRegion.ZYGOMATIC_OUTER: (30, 25),  # 大腸：顴骨下方外側
+            FaceRegion.CHEEK_LOWER: (40, 35),  # 腎：下頰區域
+            FaceRegion.CHIN_PHILTRUM: (35, 30),  # 生殖：下巴、人中
+            FaceRegion.EYE_WHITE: (25, 15),  # 眼白：特殊區域
         }
 
         # 預計算顏色映射
@@ -402,10 +381,9 @@ class FaceSkinAnalyzer:
         min_color = min(r, g, b)
 
         # 人中特殊處理：更容易判斷為發黑
-        if region == FaceRegion.REPRODUCTIVE:
+        if region == FaceRegion.CHIN_PHILTRUM:
             if brightness < 70:  # 放寬閾值
                 return SkinCondition.DARK
-
 
         # 特殊處理眼白區域
         if region == FaceRegion.EYE_WHITE:
@@ -416,8 +394,6 @@ class FaceSkinAnalyzer:
                     return SkinCondition.YELLOW  # 黃疸指標
             return SkinCondition.NORMAL
 
-
-
         saturation = (max_color - min_color) / max_color if max_color > 0 else 0
 
         total_color = r + g + b
@@ -427,8 +403,6 @@ class FaceSkinAnalyzer:
             blue_ratio = b / total_color
         else:
             red_ratio = green_ratio = blue_ratio = 0.33
-
-
 
         # 判斷膚色狀態
         if brightness < 70:
@@ -649,7 +623,7 @@ class FaceSkinAnalyzer:
 
                 return avg_color
 
-            representative_regions = [FaceRegion.HEART, FaceRegion.LUNG, FaceRegion.SPLEEN]
+            representative_regions = [FaceRegion.FOREHEAD_UPPER, FaceRegion.YINTANG, FaceRegion.NOSE_TIP]
             overall_color = calculate_average_color(region_colors, representative_regions)
 
             # 構建所有區域結果（包含位置資訊）
@@ -669,18 +643,12 @@ class FaceSkinAnalyzer:
                     key = f"{organ_name}({location})"
                     abnormal_regions[key] = condition.value
 
-            # 整合診斷結果
-            if DIAGNOSIS_AVAILABLE and get_all_diagnoses and format_diagnosis_text:
-                try:
-                    diagnosis_results = get_all_diagnoses(abnormal_regions)
-                    diagnosis_text = format_diagnosis_text(diagnosis_results)
-                except Exception as e:
-                    print(f"診斷處理失敗: {e}")
-                    diagnosis_results = {}
-                    diagnosis_text = "診斷模組處理失敗"
-            else:
-                diagnosis_results = {}
-                diagnosis_text = "診斷模組未找到" if abnormal_regions else "所有區域膚色狀態正常"
+            # 生成標註圖像
+            annotated_image_all, _ = self.draw_regions_vectorized(image, self.face_regions, self.diagnosis_results, draw_all=True)
+            annotated_image_abnormal, _ = self.draw_regions_vectorized(image, self.face_regions, self.diagnosis_results, draw_all=False)
+
+            # 生成網格分析
+            grid_analysis = self.optimized_grid_analysis(image)
 
             return {
                 "success": True,
@@ -694,9 +662,14 @@ class FaceSkinAnalyzer:
                 },
                 "all_region_results": all_regions,
                 "region_results": abnormal_regions,
-                "diagnosis_results": diagnosis_results,
-                "diagnosis_text": diagnosis_text,
-                "has_moles": has_moles,  # 改名為has_moles更清楚
+                "original_image": self.image_to_base64(original_image),
+                "annotated_image": self.image_to_base64(annotated_image_all),
+                "abnormal_only_image": self.image_to_base64(annotated_image_abnormal) if abnormal_count > 0 else None,
+                "grid_analysis": {
+                    "grid_image": self.image_to_base64(grid_analysis['grid']),
+                    "dark_blocks_image": self.image_to_base64(grid_analysis['dark_blocks'])
+                },
+                "has_moles": has_moles,
                 "mole_analysis": {
                     "has_moles": has_moles,
                     "mole_count": mole_count,
@@ -933,7 +906,7 @@ def optimized_batch_face_analysis(input_folder="images", output_folder="face_ana
         for organ, stats in organ_statistics.items():
             print(f"  - {organ}: {stats['count']} 次異常")
             for condition, count in stats['conditions'].items():
-                print(f"    └─ {condition}: {count} 次")
+                print(f"    └── {condition}: {count} 次")
 
     print(f"\n📁 結果保存在: {output_folder}")
     print(f"📄 最終報告: {report_path}")

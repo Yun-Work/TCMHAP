@@ -18,19 +18,7 @@ try:
 except ImportError as e:
     print(f"⚠️ Blueprint: 分析服務導入失敗: {e}")
 
-try:
-    from app.routes.diagnosis_mapping_route import (
-        get_all_diagnoses,
-        format_diagnosis_text
-    )
 
-    diagnosis_service = {
-        'get_all_diagnoses': get_all_diagnoses,
-        'format_diagnosis_text': format_diagnosis_text
-    }
-    print("✅ Blueprint: 成功導入診斷服務")
-except ImportError as e:
-    print(f"⚠️ Blueprint: 診斷服務導入失敗: {e}")
 
 
 @face_analysis_bp.route('/health', methods=['GET'])
