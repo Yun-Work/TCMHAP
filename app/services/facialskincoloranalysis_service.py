@@ -509,7 +509,7 @@ class FaceSkinAnalyzer:
                     cv2.rectangle(out_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     replace_img[y1:y2, x1:x2] = avg_all
 
-        # 繪製網格線（向量化）
+        # 繪製網格線
         for i in range(1, grid_size):
             cv2.line(out_img, (0, i * cell_h), (w, i * cell_h), (0, 0, 0), 1)
         for j in range(1, grid_size):
