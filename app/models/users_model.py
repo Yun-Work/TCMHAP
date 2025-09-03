@@ -11,7 +11,6 @@ class User(Base):
     password = Column(String(255), nullable=False)
     name = Column(String(100))
     gender = Column(String(50), nullable=True)
-    # gender = Column(Enum("male", "female", "other", "prefer_not_to_say", name="gender_enum"))
     birth_date = Column(Date)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
     created_at = Column(DateTime, nullable=True, default=func.now())

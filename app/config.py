@@ -1,3 +1,4 @@
+# app/config.py
 import os
 from flask.cli import load_dotenv
 from pydantic_settings import BaseSettings
@@ -13,15 +14,14 @@ MYSQL_CONFIG = {
     "charset": "utf8mb4"
 }
 
-# 載入 .env 檔案
-load_dotenv()
+# load_dotenv()  # 讀取 .env 檔案
 
 # ======================================
 # 郵件設定 (Gmail SMTP)
 # ======================================
 GMAIL_SMTP_CONFIG = {
-    "sender_email": os.getenv("GMAIL_SENDER_EMAIL"),
-    "sender_password": os.getenv("GMAIL_SENDER_PASSWORD"),
+    "sender_email": "tkuim2025@gmail.com",
+    "sender_password": "vcuf rchb jraj wgst",
 }
 
 # ======================================
