@@ -1,16 +1,16 @@
 """
-精確的痣檢測服務 - 只檢測肉眼可見的明顯痣
+精確的痣檢測服務 - 只檢測肉眼可見的明顯痣，並新增鬍鬚移除功能
+最終修正版本：確保所有函數都能正確導入
 """
 import cv2
 import numpy as np
 import base64
-from typing import Tuple, List, Dict, Optional
-from concurrent.futures import ThreadPoolExecutor
 import threading
+from typing import Tuple, List, Dict, Optional
 
 
 class MoleDetectionService:
-    """精確的痣檢測服務，只檢測明顯的痣"""
+    """精確的痣檢測服務，只檢測明顯的痣，並可移除鬍鬚"""
 
     _instance = None
     _lock = threading.Lock()
@@ -27,88 +27,75 @@ class MoleDetectionService:
         if hasattr(self, '_initialized'):
             return
 
-        # 更嚴格的檢測參數 - 只檢測明顯的痣
-        self.dark_threshold = 65  # 適中的閾值
-        self.min_area = 18  # 適中的最小面積，過濾小噪點
-        self.max_area = 4000  # 適中的最大面積
-        self.min_circularity = 0.45  # 適中的圓形度要求
-        self.contrast_threshold = 45  # 適中的對比度要求
+        # 痣檢測參數
+        self.dark_threshold = 65
+        self.min_area = 18
+        self.max_area = 4000
+        self.min_circularity = 0.45
+        self.contrast_threshold = 45
+
+        # 鬍鬚檢測參數
+        self.beard_min_length = 15
+        self.beard_max_width = 5
+        self.beard_aspect_ratio_min = 3.0
+        self.beard_darkness_threshold = 80
+        self.beard_detection_threshold = 3
+
         self._initialized = True
 
     def detect_obvious_moles(self, image: np.ndarray) -> Tuple[bool, List[Dict], np.ndarray]:
-        """
-        檢測圖像中明顯的痣（肉眼可見的）
-
-        Args:
-            image: 輸入圖像 (BGR格式)
-
-        Returns:
-            tuple: (是否檢測到痣, 痣信息列表, 檢測結果圖像)
-        """
+        """檢測圖像中明顯的痣"""
         try:
-            # 轉換為灰度圖
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-            # 使用高斯模糊減少噪音，但保持邊緣清晰
             blurred = cv2.GaussianBlur(gray, (3, 3), 0)
 
-            # 計算自適應閾值，根據局部區域特性
             adaptive_thresh = cv2.adaptiveThreshold(
                 blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY_INV, 15, 5
             )
 
-            # 同時使用固定閾值檢測非常暗的區域
             _, binary_thresh = cv2.threshold(gray, self.dark_threshold, 255, cv2.THRESH_BINARY_INV)
-
-            # 合併兩種閾值結果，只保留同時滿足的區域
             combined_mask = cv2.bitwise_and(adaptive_thresh, binary_thresh)
 
-            # 形態學操作 - 去除噪點但保留真實的痣
             kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
             combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_open)
             combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_close)
 
-            # 查找輪廓
             contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # 篩選明顯的痣
             valid_moles = []
             result_image = image.copy()
 
             for contour in contours:
                 area = cv2.contourArea(contour)
 
-                # 面積過濾 - 只保留適中大小的區域
                 if not (self.min_area <= area <= self.max_area):
                     continue
 
-                # 計算邊界框和中心
                 x, y, w, h = cv2.boundingRect(contour)
                 center_x, center_y = x + w//2, y + h//2
 
-                # 檢查邊界
                 if (x < 10 or y < 10 or x+w > image.shape[1]-10 or y+h > image.shape[0]-10):
-                    continue  # 跳過邊緣區域，可能是陰影
+                    continue
 
-                # 計算圓形度
                 perimeter = cv2.arcLength(contour, True)
                 if perimeter > 0:
                     circularity = 4 * np.pi * area / (perimeter * perimeter)
                 else:
                     continue
 
-                # 圓形度過濾 - 痣通常比較圓
                 if circularity < self.min_circularity:
                     continue
 
-                # 對比度檢查 - 確保痣與周圍皮膚有明顯差異
+                aspect_ratio = max(w, h) / max(min(w, h), 1)
+                if aspect_ratio > self.beard_aspect_ratio_min and min(w, h) <= self.beard_max_width:
+                    continue
+
                 if not self._check_contrast(gray, x, y, w, h):
                     continue
 
-                # 顏色一致性檢查 - 痣內部顏色應該相對一致
                 if not self._check_color_consistency(gray, contour):
                     continue
 
@@ -123,28 +110,145 @@ class MoleDetectionService:
                 }
                 valid_moles.append(mole_info)
 
-                # 在結果圖像上標記
                 cv2.rectangle(result_image, (x, y), (x + w, y + h), (0, 0, 255), 2)
                 cv2.circle(result_image, (center_x, center_y), 3, (0, 255, 0), -1)
-                cv2.putText(result_image, f"Mole", (x, y-10),
+                cv2.putText(result_image, "Mole", (x, y-10),
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
             has_moles = len(valid_moles) > 0
-
             return has_moles, valid_moles, result_image
 
         except Exception as e:
             print(f"檢測痣時發生錯誤: {e}")
             return False, [], image.copy()
 
+    def detect_beard_simple(self, image: np.ndarray) -> Tuple[bool, np.ndarray]:
+        """簡化的鬍鬚檢測"""
+        try:
+            has_beard_detailed, beards, detection_image = self.detect_beard_hair(image)
+            has_beard = len(beards) >= self.beard_detection_threshold
+            print(f"鬍鬚檢測結果: 檢測到鬍鬚: {has_beard}")
+            return has_beard, detection_image
+        except Exception as e:
+            print(f"簡化鬍鬚檢測時發生錯誤: {e}")
+            return False, image.copy()
+
+    def detect_beard_hair(self, image: np.ndarray) -> Tuple[bool, List[Dict], np.ndarray]:
+        """檢測圖像中的鬍鬚毛髮"""
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.GaussianBlur(gray, (1, 1), 0)
+            _, dark_mask = cv2.threshold(blurred, self.beard_darkness_threshold, 255, cv2.THRESH_BINARY_INV)
+
+            kernels = [
+                cv2.getStructuringElement(cv2.MORPH_RECT, (1, 7)),
+                cv2.getStructuringElement(cv2.MORPH_RECT, (7, 1)),
+                np.array([[0, 0, 1, 0, 0],
+                         [0, 1, 0, 1, 0],
+                         [1, 0, 0, 0, 1],
+                         [0, 1, 0, 1, 0],
+                         [0, 0, 1, 0, 0]], dtype=np.uint8),
+                np.array([[0, 0, 1, 0, 0],
+                         [0, 1, 0, 1, 0],
+                         [1, 0, 0, 0, 1],
+                         [0, 1, 0, 1, 0],
+                         [0, 0, 1, 0, 0]][::-1], dtype=np.uint8)
+            ]
+
+            hair_mask = np.zeros_like(dark_mask)
+            for kernel in kernels:
+                opened = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, kernel)
+                hair_mask = cv2.bitwise_or(hair_mask, opened)
+
+            hair_mask = cv2.morphologyEx(hair_mask, cv2.MORPH_CLOSE,
+                                       cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2)))
+
+            contours, _ = cv2.findContours(hair_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            valid_hairs = []
+            result_image = image.copy()
+
+            for contour in contours:
+                area = cv2.contourArea(contour)
+
+                if area < 8 or area > 500:
+                    continue
+
+                x, y, w, h = cv2.boundingRect(contour)
+
+                aspect_ratio = max(w, h) / max(min(w, h), 1)
+                if aspect_ratio < self.beard_aspect_ratio_min:
+                    continue
+
+                if min(w, h) > self.beard_max_width:
+                    continue
+
+                if max(w, h) < self.beard_min_length:
+                    continue
+
+                if y < image.shape[0] * 0.4:
+                    continue
+
+                hair_info = {
+                    'x': int(x),
+                    'y': int(y),
+                    'width': int(w),
+                    'height': int(h),
+                    'area': float(area),
+                    'aspect_ratio': float(aspect_ratio),
+                    'length': int(max(w, h))
+                }
+                valid_hairs.append(hair_info)
+
+                cv2.rectangle(result_image, (x, y), (x + w, y + h), (255, 0, 0), 1)
+                cv2.putText(result_image, "Hair", (x, y-5),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
+
+            has_beard = len(valid_hairs) > 0
+            return has_beard, valid_hairs, result_image
+
+        except Exception as e:
+            print(f"檢測鬍鬚時發生錯誤: {e}")
+            return False, [], image.copy()
+
+    def remove_beard_hair(self, image: np.ndarray, hairs: List[Dict]) -> np.ndarray:
+        """移除檢測到的鬍鬚毛髮"""
+        try:
+            result = image.copy()
+
+            for hair in hairs:
+                x, y, w, h = hair['x'], hair['y'], hair['width'], hair['height']
+
+                padding = 2
+                x1 = max(0, x - padding)
+                y1 = max(0, y - padding)
+                x2 = min(image.shape[1], x + w + padding)
+                y2 = min(image.shape[0], y + h + padding)
+
+                mask = np.zeros((y2-y1, x2-x1), dtype=np.uint8)
+
+                if w > h:
+                    cv2.rectangle(mask, (1, (y2-y1)//2-1), (x2-x1-1, (y2-y1)//2+1), 255, -1)
+                else:
+                    cv2.rectangle(mask, ((x2-x1)//2-1, 1), ((x2-x1)//2+1, y2-y1-1), 255, -1)
+
+                roi = result[y1:y2, x1:x2]
+                if roi.size > 0:
+                    inpainted = cv2.inpaint(roi, mask, 3, cv2.INPAINT_NS)
+                    result[y1:y2, x1:x2] = inpainted
+
+            return result
+
+        except Exception as e:
+            print(f"移除鬍鬚時發生錯誤: {e}")
+            return image.copy()
+
     def _check_contrast(self, gray_image: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
         """檢查痣區域與周圍皮膚的對比度"""
         try:
-            # 痣區域
             mole_region = gray_image[y:y+h, x:x+w]
             mole_mean = np.mean(mole_region)
 
-            # 周圍區域（擴展邊界）
             padding = max(w, h) // 2
             y1 = max(0, y - padding)
             y2 = min(gray_image.shape[0], y + h + padding)
@@ -153,22 +257,17 @@ class MoleDetectionService:
 
             surrounding_region = gray_image[y1:y2, x1:x2]
 
-            # 創建遮罩，排除痣區域本身
             mask = np.ones(surrounding_region.shape, dtype=np.uint8)
             inner_y = y - y1
             inner_x = x - x1
             mask[inner_y:inner_y+h, inner_x:inner_x+w] = 0
 
-            # 計算周圍區域的平均亮度
             surrounding_pixels = surrounding_region[mask == 1]
             if len(surrounding_pixels) == 0:
                 return False
 
             surrounding_mean = np.mean(surrounding_pixels)
-
-            # 檢查對比度
             contrast = abs(surrounding_mean - mole_mean)
-
             return contrast > self.contrast_threshold
 
         except Exception as e:
@@ -178,20 +277,15 @@ class MoleDetectionService:
     def _check_color_consistency(self, gray_image: np.ndarray, contour: np.ndarray) -> bool:
         """檢查痣內部顏色的一致性"""
         try:
-            # 創建痣區域的遮罩
             mask = np.zeros(gray_image.shape, dtype=np.uint8)
             cv2.fillPoly(mask, [contour], 255)
 
-            # 獲取痣區域的像素值
             mole_pixels = gray_image[mask == 255]
 
             if len(mole_pixels) < 10:
                 return False
 
-            # 計算標準差，檢查一致性
             std_dev = np.std(mole_pixels)
-
-            # 痣內部顏色應該相對一致（標準差不應太大）
             return std_dev < 25
 
         except Exception as e:
@@ -199,39 +293,26 @@ class MoleDetectionService:
             return False
 
     def remove_moles(self, image: np.ndarray, moles: List[Dict]) -> np.ndarray:
-        """
-        移除檢測到的痣
-
-        Args:
-            image: 原始圖像
-            moles: 痣信息列表
-
-        Returns:
-            處理後的圖像
-        """
+        """移除檢測到的痣"""
         try:
             result = image.copy()
 
             for mole in moles:
                 x, y, w, h = mole['x'], mole['y'], mole['width'], mole['height']
 
-                # 擴展處理區域以確保完全覆蓋
                 padding = 8
                 x1 = max(0, x - padding)
                 y1 = max(0, y - padding)
                 x2 = min(image.shape[1], x + w + padding)
                 y2 = min(image.shape[0], y + h + padding)
 
-                # 創建圓形遮罩（痣通常是圓形的）
                 mask = np.zeros((y2-y1, x2-x1), dtype=np.uint8)
                 center = ((x + w//2) - x1, (y + h//2) - y1)
                 radius = max(w, h) // 2 + 3
                 cv2.circle(mask, center, radius, 255, -1)
 
-                # 使用修復算法填補
                 roi = result[y1:y2, x1:x2]
                 if roi.size > 0:
-                    # 使用 TELEA 算法，效果更自然
                     inpainted = cv2.inpaint(roi, mask, 5, cv2.INPAINT_TELEA)
                     result[y1:y2, x1:x2] = inpainted
 
@@ -241,41 +322,56 @@ class MoleDetectionService:
             print(f"移除痣時發生錯誤: {e}")
             return image.copy()
 
-    def comprehensive_mole_analysis(self, image: np.ndarray) -> Dict:
-        """
-        綜合痣分析（簡化版，只檢測明顯痣）
-
-        Args:
-            image: 輸入圖像
-
-        Returns:
-            完整的分析結果
-        """
+    def comprehensive_mole_analysis(self, image: np.ndarray, remove_beard: bool = False) -> Dict:
+        """綜合痣分析"""
         try:
-            # 只進行痣檢測
-            has_moles, moles, detection_image = self.detect_obvious_moles(image)
-
-            # 如果檢測到痣，生成處理後的圖像
             processed_image = image.copy()
+            beard_info = {'has_beard': False, 'beard_count': 0}
+
+            if remove_beard:
+                has_beard_simple, beard_detection_image = self.detect_beard_simple(image)
+                if has_beard_simple:
+                    _, beards_detailed, _ = self.detect_beard_hair(image)
+                    processed_image = self.remove_beard_hair(image, beards_detailed)
+
+                beard_info = {
+                    'has_beard': has_beard_simple,
+                    'beard_count': 1 if has_beard_simple else 0,
+                    'detection_image': beard_detection_image
+                }
+            else:
+                has_beard_simple, beard_detection_image = self.detect_beard_simple(image)
+                beard_info = {
+                    'has_beard': has_beard_simple,
+                    'beard_count': 1 if has_beard_simple else 0,
+                    'detection_image': beard_detection_image
+                }
+
+            has_moles, moles, mole_detection_image = self.detect_obvious_moles(processed_image)
+
+            final_image = processed_image.copy()
             if has_moles:
-                processed_image = self.remove_moles(image, moles)
+                final_image = self.remove_moles(processed_image, moles)
 
             return {
-                'has_dark_areas': has_moles,  # 為了兼容性保持這個名稱
+                'has_dark_areas': has_moles,
                 'spot_detection': {
                     'has_spots': has_moles,
                     'spots': moles,
-                    'detection_image': detection_image
+                    'detection_image': mole_detection_image
                 },
+                'beard_detection': beard_info,
                 'grid_analysis': {
-                    'has_dark_blocks': False,  # 不再進行網格分析
+                    'has_dark_blocks': False,
                     'dark_block_count': 0
                 },
                 'original_image': image,
-                'processed_image': processed_image,
+                'processed_image': final_image,
+                'beard_removed_image': processed_image if remove_beard else image,
                 'summary': {
                     'spot_count': len(moles),
-                    'dark_block_count': 0,  # 不再檢測暗色區域
+                    'beard_count': beard_info['beard_count'],
+                    'dark_block_count': 0,
                     'total_dark_areas': len(moles)
                 }
             }
@@ -285,10 +381,12 @@ class MoleDetectionService:
             return {
                 'has_dark_areas': False,
                 'spot_detection': {'has_spots': False, 'spots': [], 'detection_image': image},
+                'beard_detection': {'has_beard': False, 'beard_count': 0},
                 'grid_analysis': {'has_dark_blocks': False, 'dark_block_count': 0},
                 'original_image': image,
                 'processed_image': image.copy(),
-                'summary': {'spot_count': 0, 'dark_block_count': 0, 'total_dark_areas': 0}
+                'beard_removed_image': image.copy(),
+                'summary': {'spot_count': 0, 'beard_count': 0, 'dark_block_count': 0, 'total_dark_areas': 0}
             }
 
     def image_to_base64(self, image: np.ndarray) -> str:
@@ -302,33 +400,35 @@ class MoleDetectionService:
             return ""
 
 
-# 便利函數
-def detect_and_analyze_moles(image: np.ndarray) -> Dict:
+# === 全局便利函數 - 確保這些函數在模塊級別定義 ===
+
+def detect_and_analyze_moles(image: np.ndarray, remove_beard: bool = False) -> Dict:
     """
-    便利函數：檢測和分析圖像中的明顯痣
+    便利函數：檢測和分析圖像中的明顯痣，可選擇是否移除鬍鬚
 
     Args:
         image: 輸入圖像 (BGR格式)
+        remove_beard: 是否移除鬍鬚，默認False
 
     Returns:
         完整的分析結果字典
     """
     detector = MoleDetectionService()
-    return detector.comprehensive_mole_analysis(image)
+    return detector.comprehensive_mole_analysis(image, remove_beard)
 
 
-def process_image_for_moles(base64_string: str) -> Dict:
+def process_image_for_moles(base64_string: str, remove_beard: bool = False) -> Dict:
     """
-    從base64字符串處理圖像並檢測明顯痣
+    從base64字符串處理圖像並檢測明顯痣，可選擇是否移除鬍鬚
 
     Args:
         base64_string: base64編碼的圖像字符串
+        remove_beard: 是否移除鬍鬚，默認False
 
     Returns:
         處理結果字典
     """
     try:
-        # 解碼base64
         if base64_string.startswith('data:image'):
             base64_string = base64_string.split(',')[1]
 
@@ -339,12 +439,77 @@ def process_image_for_moles(base64_string: str) -> Dict:
         if image is None:
             return {'success': False, 'error': 'Unable to decode image'}
 
-        # 執行分析
-        result = detect_and_analyze_moles(image)
-
-        # 轉換圖像為base64（簡化版，不回傳圖像）
+        result = detect_and_analyze_moles(image, remove_beard)
         result['success'] = True
         return result
 
     except Exception as e:
         return {'success': False, 'error': f'處理圖像時發生錯誤: {str(e)}'}
+
+
+def remove_beard_from_image(image: np.ndarray) -> Tuple[np.ndarray, Dict]:
+    """
+    單獨的鬍鬚移除函數
+
+    Args:
+        image: 輸入圖像
+
+    Returns:
+        tuple: (處理後的圖像, 鬍鬚檢測信息)
+    """
+    detector = MoleDetectionService()
+    has_beard, detection_image = detector.detect_beard_simple(image)
+
+    if has_beard:
+        _, beards_detailed, _ = detector.detect_beard_hair(image)
+        processed_image = detector.remove_beard_hair(image, beards_detailed)
+        return processed_image, {
+            'has_beard': True,
+            'beard_count': 1,
+            'detection_image': detection_image
+        }
+    else:
+        return image.copy(), {
+            'has_beard': False,
+            'beard_count': 0,
+            'detection_image': detection_image
+        }
+
+
+def test_mole_detection():
+    """測試痣檢測功能"""
+    print("痣檢測服務測試開始")
+    try:
+        detector = MoleDetectionService()
+        print("服務初始化完成")
+
+        print(f"痣檢測參數:")
+        print(f"  暗度閾值: {detector.dark_threshold}")
+        print(f"  最小面積: {detector.min_area}")
+        print(f"  最大面積: {detector.max_area}")
+
+        print(f"鬍鬚檢測參數:")
+        print(f"  檢測閾值: {detector.beard_detection_threshold}")
+        print(f"  最小長度: {detector.beard_min_length}")
+        print(f"  最大寬度: {detector.beard_max_width}")
+
+        print("基本功能測試通過")
+        return True
+
+    except Exception as e:
+        print(f"測試失敗: {e}")
+        return False
+
+
+# 確保所有需要的函數都能被導入
+__all__ = [
+    'MoleDetectionService',
+    'detect_and_analyze_moles',
+    'process_image_for_moles',
+    'remove_beard_from_image',
+    'test_mole_detection'
+]
+
+
+if __name__ == "__main__":
+    test_mole_detection()
