@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from werkzeug.security import generate_password_hash
 
-from app.models.user_model import User
+from app.models.users_model import User
 from app.models.verifycode_model import VerifyCode
 from app.utils.mail_util import send_email
 
