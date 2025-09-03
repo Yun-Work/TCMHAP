@@ -15,4 +15,4 @@ class User(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
     created_at = Column(DateTime, nullable=True, default=func.now())
 
-    analyses = relationship("FaceAnalysis", back_populates="user", cascade="all, delete-orphan")
+    # analyses = relationship("FaceAnalysis", back_populates="user", cascade="all, delete-orphan")
