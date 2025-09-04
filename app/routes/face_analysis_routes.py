@@ -7,7 +7,6 @@ import cv2
 import json  # 🆕 for prompt/sources serialization
 from app.db import SessionLocal
 from app.models.face_analysis_model import FaceAnalysis
-
 import importlib
 import asyncio
 import traceback as _tb
@@ -155,6 +154,40 @@ def _build_advice_prompt(region_results: dict, all_region_results: dict, overall
 #         parts.append("本次整體觀察多屬穩定，建議持續規律作息與均衡飲食，並維持適度運動與水分攝取。")
 #     parts.append("建議維持規律睡眠、減少油炸辛辣與含糖飲品，增加蔬果與高纖食物，並以散步伸展等舒緩活動調整身心；若不適持續，請向專業醫師諮詢。")
 #     return "".join(parts).strip()
+
+def _split_area_label(area: str) -> tuple[str, str]:
+    """
+    例如「右上頰(肺)」→ (face='右上頰', organ='肺')
+    為符合你的資料表 varchar(5)，兩者都最多取前 5 個字。
+    """
+    if not area:
+        return "", ""
+    area = area.strip()
+    if "(" in area and area.endswith(")"):
+        base, organ = area.split("(", 1)
+        return base.strip()[:5], organ[:-1].strip()[:5]
+    return area[:5], ""
+
+def _build_area_advice_prompt(area_label: str, status: str,
+                              overall_color: dict | None,
+                              has_moles: bool, mole_analysis: dict,
+                              has_beard: bool, beard_analysis: dict) -> str:
+    """
+    針對「單一區域」產生 RAG 提示。只用 RAG、不做 fallback。
+    """
+    hexv = overall_color.get("hex") if isinstance(overall_color, dict) else None
+    return (
+        "你是一位臉色觀察與臟腑對應的助理。請務必以繁體中文回答，避免英文；"
+        "請在一個連貫段落中依序回答所有問題，不要換行、不要列點、不要標題；"
+        "病機與症狀使用保守語氣（可能提示、或與…相關、可能伴隨…）；"
+        "若無明確答案請用『資料未明確指出』。\n\n"
+        "字數約 80～160 字。\n\n"
+        f"【單一觀察重點】\n- 區域：{area_label}\n- 現象：{status}\n"
+        f"- 整體臉色 HEX：{hexv or '未知'}\n"
+        f"- 痣：{'有' if has_moles else '無'}（統計：{json.dumps(mole_analysis or {}, ensure_ascii=False)}）\n"
+        f"- 鬍鬚：{'有' if has_beard else '無'}（統計：{json.dumps(beard_analysis or {}, ensure_ascii=False)}）\n\n"
+        "請輸出一段建議文字（不要條列清單、不要標題、不要引用來源）。"
+    )
 
 # ==== 只用 RAG 的同步包裝 ====
 def _run_rag_sync(prompt: str) -> Tuple[str, List[Dict]]:
@@ -406,52 +439,71 @@ def upload_and_analyze():
             print(f"   - 建議文字: {response_data['diagnosis_text'][:80]}{'...' if len(response_data['diagnosis_text'])>80 else ''}")  # 🆕
 
             # =========================
-            # 分析成功後，寫入 face_analysis 資料表（逐區域一列）
+            # 針對每個「異常區域」逐一跑 RAG，並逐筆寫入 face_analysis
             # =========================
             try:
-                area_map = result.get("region_results") or {} #只存異常
-
-                advice_text = response_data.get("diagnosis_text", "")
+                area_map = result.get("region_results") or {}  # 只處理異常
                 now = datetime.utcnow()
 
-                def _split_area_label(area: str) -> tuple[str, str]:
-                    """
-                    例如「右上頰(肺)」→ (face='右上頰', organ='肺')
-                    為符合欄位長度 varchar(5)，切到最多 5 字。
-                    """
-                    if not area:
-                        return "", ""
-                    area = area.strip()
-                    if "(" in area and area.endswith(")"):
-                        base, organ = area.split("(", 1)
-                        return base.strip()[:5], organ[:-1].strip()[:5]
-                    return area[:5], ""
+                # 準備鬍鬚/痣資訊（沿用你上面已計算的結果）
+                has_beard = (beard_detection_result.get("has_beard", False) if not remove_beard else False)
+                beard_ana = {
+                    "beard_count": beard_detection_result.get("beard_count", 0) if not remove_beard else 0,
+                    "has_beard": has_beard
+                }
+                has_moles = result.get("has_moles", False)
+                mole_ana = result.get("mole_analysis", {})
 
-                rows = []
-                for area, status_str in area_map.items():
-                    face_val, organ_val = _split_area_label(area)
-                    status_val = (status_str or "未知")[:5]
-                    rows.append(FaceAnalysis(
-                        face=face_val,
-                        organ=organ_val,
-                        status=status_val,
-                        message=advice_text,
-                        analysis_date=now
-                    ))
+                area_advices = {}  # 回傳給前端用：{區域: {advice, sources, fa_id}}
+                written = 0
 
-                if rows:
-                    with SessionLocal() as db:
-                        db.add_all(rows)
-                        db.commit()
-                        print(f"🗄️ Blueprint: face_analysis 已寫入 {len(rows)} 筆")
-                else:
-                    print("ℹ️ Blueprint: 本次沒有可寫入的區域資料。")
+                with SessionLocal() as db:
+                    for area_label, status_str in area_map.items():
+                        # 1) 為該區域建 prompt、跑 RAG（同步包裝）
+                        prompt = _build_area_advice_prompt(
+                            area_label=area_label,
+                            status=status_str,
+                            overall_color=result.get("overall_color"),
+                            has_moles=has_moles,
+                            mole_analysis=mole_ana,
+                            has_beard=has_beard,
+                            beard_analysis=beard_ana
+                        )
+                        advice_text, advice_sources = _run_rag_sync(prompt)  # 只用 RAG；失敗則回 ""
+
+                        # 2) 解析 face/organ
+                        face_val, organ_val = _split_area_label(area_label)
+                        status_val = (status_str or "未知")[:5]
+
+                        # 3) 逐筆寫入 DB（你要「一筆一筆存」就每筆 commit）
+                        row = FaceAnalysis(
+                            face=face_val,
+                            organ=organ_val,
+                            status=status_val,
+                            message=advice_text,  # 該區域的 RAG 建議
+                            analysis_date=now
+                        )
+                        db.add(row)
+                        db.commit()  # 逐筆 commit
+                        db.refresh(row)  # 取回自增主鍵
+
+                        written += 1
+                        area_advices[area_label] = {
+                            "advice": advice_text,
+                            "sources": advice_sources,
+                            "fa_id": getattr(row, "fa_id", None)
+                        }
+
+                print(f"🗄️ Blueprint: face_analysis 已逐筆寫入 {written} 筆（異常區域）")
+
+                # 回應體也帶回每個區域的建議，前端建議區塊可逐項顯示
+                response_data["diagnoses"] = area_advices
+                # 如不再需要整體建議段落，可清空或保留你之前的總結
+                response_data["diagnosis_text"] = ""  # 僅用每區域建議時清空
 
             except Exception as e:
-                # 寫庫失敗時只記錄，不阻擋 API 回傳
-                print(f"⚠️ Blueprint: 寫入 face_analysis 失敗：{e}")
+                print(f"⚠️ Blueprint: 逐區域寫入 face_analysis 失敗：{e}")
             # =========================
-
             return jsonify(response_data)
 
         except Exception as e:

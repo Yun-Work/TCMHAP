@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE: str = "http://127.0.0.1:11434"
-    OLLAMA_MODEL: str = "llama3.1:8b"
+    OLLAMA_MODEL: str = "llama3.2" #效能需求高版本model llama3.1:8b
     EMBED_MODEL: str = "mxbai-embed-large"
 
     CHUNK_SIZE: int = 1000

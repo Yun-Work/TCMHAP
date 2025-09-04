@@ -224,9 +224,27 @@ async def retrieve(query: str, top_k: int = 4) -> List[Dict]:
     return hits
 
 async def generate_answer(query: str, contexts: List[Dict]) -> str:
-    """根據 contexts 生成回答（繁中）。"""
+    """根據 contexts 生成回答（繁中）。加入 context 縮減與錯誤內容顯示。"""
     provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
-    context_block = "\n\n".join([normalize_text(c.get("text", "")) for c in contexts if c.get("text")])
+
+    # ---- 縮小上下文（避免 500）----
+    TOTAL_BUDGET = 8000     # 總字元上限（可再降到 6000）
+    PER_CHUNK_CAP = 1500    # 每段上限
+
+    texts: List[str] = []
+    total = 0
+    for c in contexts or []:
+        t = normalize_text(c.get("text", ""))
+        if not t:
+            continue
+        if len(t) > PER_CHUNK_CAP:
+            t = t[:PER_CHUNK_CAP]
+        if total + len(t) > TOTAL_BUDGET:
+            break
+        texts.append(t)
+        total += len(t)
+
+    context_block = "\n\n".join(texts)
 
     system = (
         "你是一位臉色觀察與臟腑對應的助理。必須以繁體中文回答；"
@@ -248,21 +266,37 @@ async def generate_answer(query: str, contexts: List[Dict]) -> str:
         }
         async with httpx.AsyncClient(timeout=300) as client:
             r = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-            r.raise_for_status()
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                print(f"rag_core: OpenAI API 錯誤：{e.response.status_code} {e.response.text[:800]}")
+                return ""  # 不中斷流程
             data = r.json()
             return data["choices"][0]["message"]["content"].strip()
 
-    # Ollama
+    # ---- Ollama 路徑 ----
     base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
     prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
+    # 限制輸出長度與上下文長度（避免 OOM）
+    options = {"temperature": 0.2, "num_predict": 160, "num_ctx": 2048}
+
     payload = {
-        "model": settings.OLLAMA_MODEL,
+        "model": getattr(settings, "OLLAMA_MODEL", "llama3.2:3b-instruct"),
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.2},
+        "options": options,
     }
-    async with httpx.AsyncClient(timeout=300) as client:
+
+    print(f"rag_core: call Ollama generate model={payload['model']} ctx_chars={len(context_block)} base={base}")
+
+    async with httpx.AsyncClient(timeout=600) as client:
         r = await client.post(f"{base}/api/generate", json=payload)
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            # 印出伺服器回應內容（常見：model not found / not enough memory）
+            body = e.response.text
+            print(f"rag_core: Ollama /api/generate 錯誤 {e.response.status_code}: {body[:1000]}")
+            return ""  # 不中斷流程
         data = r.json()
         return (data.get("response") or "").strip()
