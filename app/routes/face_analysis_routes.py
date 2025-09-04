@@ -1,10 +1,26 @@
 from flask import Blueprint, request, jsonify
 import traceback
+from datetime import datetime
 import base64
 import numpy as np
 import cv2
+import json  # 🆕 for prompt/sources serialization
 from app.db import SessionLocal
 from app.models.face_analysis_model import FaceAnalysis
+
+import importlib
+import asyncio
+import traceback as _tb
+from typing import List, Dict, Tuple   # 若你的 Py 版本 < 3.9 必用；>=3.9 也可保留
+
+# 嘗試載入 RAG 服務（query_rag -> rag_core）
+try:  # 🆕
+    # 你專題的 query_rag 會從 rag_core 匯入 retrieve/generate_answer
+    from app.services.rag_core import retrieve, generate_answer  # 依你的實作名稱調整
+    _rag_ready = True
+except Exception as _e:  # 🆕
+    print(f"⚠️ Blueprint: RAG 服務不可用：{_e}")
+    _rag_ready = False
 
 # 創建Blueprint
 face_analysis_bp = Blueprint('face_analysis', __name__)
@@ -103,13 +119,108 @@ def process_beard_removal(image_data):
         return None
 
 
+# =========================
+# 🆕 RAG 提示建構 & Fallback
+# =========================
+def _build_advice_prompt(region_results: dict, all_region_results: dict, overall_color: dict | None,
+                         has_moles: bool, mole_analysis: dict, has_beard: bool, beard_analysis: dict) -> str:
+    """
+    把這次分析的重點整理成 RAG 提示詞；口吻採「觀察/建議」而非醫療診斷。
+    """
+    abnormal_pairs = [f"{k}：{v}" for k, v in (region_results or {}).items()]
+    overall_hex = overall_color.get("hex") if isinstance(overall_color, dict) else None
+
+    prompt = f"""你是一位中醫知識助理，請根據臉部觀察資料，輸出「非醫療診斷」的健康建議，口吻中立客觀，避免病名，使用「可能/建議/可留意」等字眼。輸出為短段落（120~220字），繁體中文。
+
+【觀察資料】
+- 異常區域（位置→顏色）：{ "、".join(abnormal_pairs) if abnormal_pairs else "無" }
+- 整體臉色 (HEX)：{overall_hex or "未知"}
+- 痣：{"有" if has_moles else "無"}（統計：{json.dumps(mole_analysis or {}, ensure_ascii=False)})
+- 鬍鬚：{"有" if has_beard else "無"}（統計：{json.dumps(beard_analysis or {}, ensure_ascii=False)})
+
+【輸出格式】
+直接回覆建議段落，不要加標題或項目符號；避免下診斷、避免指示性治療；可包含作息、飲食、情緒與運動等一般性建議。"""
+    return prompt
+
+
+# def _fallback_advice_text(region_results: dict, overall_color: dict | None) -> str:
+#     reds = [k for k, v in (region_results or {}).items() if v == "發紅"]
+#     blacks = [k for k, v in (region_results or {}).items() if v == "發黑"]
+#     parts = []
+#     if reds:
+#         parts.append(f"部分區域呈現發紅（如：{'、'.join(reds[:4])}{'…' if len(reds) > 4 else ''}），可能與近期作息不規律、情緒壓力或飲食偏重口味有關。")
+#     if blacks:
+#         parts.append(f"{' ' if parts else ''}另見發黑表現（如：{'、'.join(blacks[:3])}{'…' if len(blacks) > 3 else ''}），可留意是否疲勞、飲水不足或久坐少動。")
+#     if not parts:
+#         parts.append("本次整體觀察多屬穩定，建議持續規律作息與均衡飲食，並維持適度運動與水分攝取。")
+#     parts.append("建議維持規律睡眠、減少油炸辛辣與含糖飲品，增加蔬果與高纖食物，並以散步伸展等舒緩活動調整身心；若不適持續，請向專業醫師諮詢。")
+#     return "".join(parts).strip()
+
+# ==== 只用 RAG 的同步包裝 ====
+def _run_rag_sync(prompt: str) -> Tuple[str, List[Dict]]:
+    """
+    在 Flask 同步路由中呼叫 async 的 RAG。
+    回傳 (advice_text, sources)，若失敗傳 ("", [])。
+    """
+    try:
+        m = importlib.import_module("app.services.rag_core")
+        _retrieve = getattr(m, "retrieve", None)
+        _generate_answer = getattr(m, "generate_answer", None)
+        if not callable(_retrieve) or not callable(_generate_answer):
+            raise RuntimeError("rag_core 缺少 retrieve/generate_answer")
+
+        async def _flow():
+            ctx = await _retrieve(prompt, top_k=4)  # ✅ 一定要 await
+            txt = await _generate_answer(
+                query="請根據觀察資料給非醫療建議（120-220字、繁中）。",
+                contexts=ctx
+            )  # ✅ 參數名稱要用 query / contexts
+            return txt, ctx
+
+        txt, ctx = asyncio.run(_flow())
+
+        # 整理來源給前端（可選）
+        sources: List[Dict] = []
+        for c in ctx or []:
+            meta = c.get("metadata", {})
+            sources.append({
+                "source": meta.get("source"),
+                "chunk": meta.get("chunk"),
+                "score": c.get("score"),
+            })
+
+        return (txt or "").strip(), sources
+
+    except Exception:
+        _tb.print_exc()
+        return "", []
+
+def _get_rag_advice_text(region_results, all_region_results, overall_color,
+                         has_moles, mole_analysis, has_beard, beard_analysis) -> tuple[str, list[dict]]:
+    """
+    只用 RAG 生成建議；若失敗/回空，傳回空字串與空來源。
+    """
+    try:
+        prompt = _build_advice_prompt(
+            region_results, all_region_results, overall_color,
+            has_moles, mole_analysis, has_beard, beard_analysis
+        )
+        advice_text, sources = _run_rag_sync(prompt)
+        return (advice_text or "").strip(), (sources or [])
+    except Exception as e:
+        print(f"⚠️ 產生建議失敗：{e}")
+        return "", []
+
+
+
 @face_analysis_bp.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
         "status": "healthy",
         "analysis_service": analysis_service is not None,
         "diagnosis_service": diagnosis_service is not None,
-        "mole_detection_service": mole_detection_service is not None
+        "mole_detection_service": mole_detection_service is not None,
+        "rag_service": _rag_ready  # 🆕
     })
 
 
@@ -237,6 +348,20 @@ def upload_and_analyze():
                 beard_detection_result = detect_beard_features(image_data)
                 print(f"🧔 Blueprint: 鬍鬚檢測結果: {beard_detection_result}")
 
+            # 🆕 取得建議文字（RAG → diagnosis_text；失敗則 fallback）
+            advice_text, advice_sources = _get_rag_advice_text(
+                region_results=result.get("region_results", {}),
+                all_region_results=result.get("all_region_results", {}),
+                overall_color=result.get("overall_color"),
+                has_moles=result.get("has_moles", False),
+                mole_analysis=result.get("mole_analysis", {}),
+                has_beard=beard_detection_result.get("has_beard", False) if not remove_beard else False,
+                beard_analysis={
+                    "beard_count": beard_detection_result.get("beard_count", 0) if not remove_beard else 0,
+                    "has_beard": beard_detection_result.get("has_beard", False) if not remove_beard else False
+                }
+            )
+
             # 準備響應數據（包含新欄位）
             response_data = {
                 "success": True,
@@ -245,8 +370,8 @@ def upload_and_analyze():
                 "overall_color": result.get("overall_color", None),
                 "all_region_results": result.get("all_region_results", {}),
                 "region_results": result.get("region_results", {}),
-                "diagnoses": {},
-                "diagnosis_text": "",
+                "diagnoses": {},  # 若你之後要放每區塊建議，可在這裡塞 map
+                "diagnosis_text": advice_text,  # 🆕 由 RAG 產生的建議段落
 
                 # 痣檢測相關欄位
                 "has_moles": result.get("has_moles", False),
@@ -264,9 +389,12 @@ def upload_and_analyze():
                 },
                 "beard_removed": remove_beard,
 
-                # 圖片相關欄位
-                #"annotated_image": result.get("annotated_image"),
-                #"original_image": result.get("original_image"),
+                # 🆕 可選：把 RAG 來源一併回傳，前端需要可顯示「參考來源」
+                "advice_sources": advice_sources,
+
+                # 圖片相關欄位（若你之後要打開）
+                # "annotated_image": result.get("annotated_image"),
+                # "original_image": result.get("original_image"),
             }
 
             print(f"📊 Blueprint: 響應數據準備完成")
@@ -275,38 +403,49 @@ def upload_and_analyze():
             print(f"   - 檢測到鬍鬚: {response_data['has_beard']}")
             print(f"   - 痣已移除: {response_data['moles_removed']}")
             print(f"   - 鬍鬚已移除: {response_data['beard_removed']}")
+            print(f"   - 建議文字: {response_data['diagnosis_text'][:80]}{'...' if len(response_data['diagnosis_text'])>80 else ''}")  # 🆕
 
             # =========================
-            # 分析成功後，寫入 face_analysis 資料表
+            # 分析成功後，寫入 face_analysis 資料表（逐區域一列）
             # =========================
             try:
-                # 取得「異常器官」清單（region_results 已是只有異常）
-                abnormal_map = result.get("region_results") or {}
-                abnormal_organs = list(abnormal_map.keys())  # 例: ["肺","肝","胃"]
+                area_map = result.get("region_results") or {} #只存異常
 
-                # 取得「正常器官」清單（用 all_region_results 扣掉異常），若沒有就存 None
-                all_map = result.get("all_region_results") or {}
-                normal_organs = None
-                if all_map:
-                    normal_organs = [k for k in all_map.keys() if k not in abnormal_map]
+                advice_text = response_data.get("diagnosis_text", "")
+                now = datetime.utcnow()
 
-                # 從請求取得 user_id（沒有登入就存 None；可依你實作改來源）
-                raw_uid = request.headers.get("X-User-Id")  # 例如 App 端送上來
-                user_id = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
+                def _split_area_label(area: str) -> tuple[str, str]:
+                    """
+                    例如「右上頰(肺)」→ (face='右上頰', organ='肺')
+                    為符合欄位長度 varchar(5)，切到最多 5 字。
+                    """
+                    if not area:
+                        return "", ""
+                    area = area.strip()
+                    if "(" in area and area.endswith(")"):
+                        base, organ = area.split("(", 1)
+                        return base.strip()[:5], organ[:-1].strip()[:5]
+                    return area[:5], ""
 
-                # 寫入 MySQL（organs/normal_organs 都是 JSON 欄位，直接塞 list）
-                if abnormal_organs or normal_organs:
+                rows = []
+                for area, status_str in area_map.items():
+                    face_val, organ_val = _split_area_label(area)
+                    status_val = (status_str or "未知")[:5]
+                    rows.append(FaceAnalysis(
+                        face=face_val,
+                        organ=organ_val,
+                        status=status_val,
+                        message=advice_text,
+                        analysis_date=now
+                    ))
+
+                if rows:
                     with SessionLocal() as db:
-                        row = FaceAnalysis(
-                            user_id=user_id,
-                            organs=abnormal_organs if abnormal_organs else [],  # 至少存空陣列，避免 NULL
-                            normal_organs=normal_organs  # 允許 None
-                        )
-                        db.add(row)
+                        db.add_all(rows)
                         db.commit()
-                        print(f"🗄️ Blueprint: 已寫入 face_analysis，id={row.id}")
+                        print(f"🗄️ Blueprint: face_analysis 已寫入 {len(rows)} 筆")
                 else:
-                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單（異常/正常皆空）。")
+                    print("ℹ️ Blueprint: 本次沒有可寫入的區域資料。")
 
             except Exception as e:
                 # 寫庫失敗時只記錄，不阻擋 API 回傳
@@ -416,6 +555,19 @@ def analyze_face():
 
         # 添加處理狀態標記
         result["beard_removed"] = remove_beard
+
+        # 🆕 同樣把 RAG 建議塞進 diagnosis_text
+        advice_text, advice_sources = _get_rag_advice_text(
+            region_results=result.get("region_results", {}),
+            all_region_results=result.get("all_region_results", {}),
+            overall_color=result.get("overall_color"),
+            has_moles=result.get("has_moles", False),
+            mole_analysis=result.get("mole_analysis", {}),
+            has_beard=result.get("has_beard", False),
+            beard_analysis=result.get("beard_analysis", {})
+        )
+        result["diagnosis_text"] = advice_text
+        result["advice_sources"] = advice_sources  # 若前端要顯示參考來源
 
         return jsonify(result)
 
