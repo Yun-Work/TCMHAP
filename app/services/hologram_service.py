@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-import dlib
+# import dlib
 import cv2
 import numpy as np
 
@@ -91,8 +91,8 @@ def draw_square_on_point(img, point_index, color, label, raw_img=None, landmarks
 def detect_and_process_faces(img_path):
     predictor_path = "libs/shape_predictor_68_face_landmarks.dat"#dlid套件
     region_list = []
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor(predictor_path)
+    # detector = dlib.get_frontal_face_detector()
+    # predictor = dlib.shape_predictor(predictor_path)
 
 
 
@@ -101,39 +101,39 @@ def detect_and_process_faces(img_path):
         print("無法加載圖像")
         return None
 
-    img_raw = img.copy()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    faces = detector(gray)
-
-    for face in faces:
-        landmarks = predictor(gray, face)
-
-
-        # 額頭區域三等分
-        forehead_boxes, centers = detect_forehead(landmarks)
-        for i, (box, pos) in enumerate(zip(forehead_boxes, centers)):
-            cv2.rectangle(img, box[0], box[1], (0, 0, 255), 1)
-            roi=extract_box_image(img_raw, box[0], box[1],f"forehead_{i+1}")
-            if roi:
-                region_list.append(roi)
-
-        # 左右臉頰垂直三等分
-        right_rois, _ = draw_vertical_segments(img, 40, 4, (0, 255, 0), "right_cheek", img_raw, landmarks)
-        left_rois, _ = draw_vertical_segments(img, 47, 12, (0, 255, 0), "left_cheek", img_raw, landmarks)
-        region_list.extend(right_rois + left_rois)
-
-        # 其他區域
-        draw_rect = lambda *args, **kwargs: None  # 保留占位
-        draw_rect(img, 32, 52, (0, 255, 255), "philtrum", img_raw, landmarks)
-        draw_rect(img, 39, 32, (255, 0, 255), "right_nostril", img_raw, landmarks)
-        draw_rect(img, 42, 34, (255, 0, 255), "left_nostril", img_raw, landmarks)
-        # 鼻子
-        nose_tip = draw_square_on_point(img, 30, (0, 0, 0), "nose_tip", img_raw, landmarks)
-        nose_root = draw_square_on_point(img, 27, (0, 0, 0), "nose_root", img_raw, landmarks)
-        if nose_tip:
-            region_list.append(nose_tip)
-        if nose_root:
-            region_list.append(nose_root)
+    # img_raw = img.copy()
+    # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # faces = detector(gray)
+    #
+    # for face in faces:
+    #     # landmarks = predictor(gray, face)
+    #
+    #
+    #     # 額頭區域三等分
+    #     forehead_boxes, centers = detect_forehead(landmarks)
+    #     for i, (box, pos) in enumerate(zip(forehead_boxes, centers)):
+    #         cv2.rectangle(img, box[0], box[1], (0, 0, 255), 1)
+    #         roi=extract_box_image(img_raw, box[0], box[1],f"forehead_{i+1}")
+    #         if roi:
+    #             region_list.append(roi)
+    #
+    #     # 左右臉頰垂直三等分
+    #     right_rois, _ = draw_vertical_segments(img, 40, 4, (0, 255, 0), "right_cheek", img_raw, landmarks)
+    #     left_rois, _ = draw_vertical_segments(img, 47, 12, (0, 255, 0), "left_cheek", img_raw, landmarks)
+    #     region_list.extend(right_rois + left_rois)
+    #
+    #     # 其他區域
+    #     draw_rect = lambda *args, **kwargs: None  # 保留占位
+    #     draw_rect(img, 32, 52, (0, 255, 255), "philtrum", img_raw, landmarks)
+    #     draw_rect(img, 39, 32, (255, 0, 255), "right_nostril", img_raw, landmarks)
+    #     draw_rect(img, 42, 34, (255, 0, 255), "left_nostril", img_raw, landmarks)
+    #     # 鼻子
+    #     nose_tip = draw_square_on_point(img, 30, (0, 0, 0), "nose_tip", img_raw, landmarks)
+    #     nose_root = draw_square_on_point(img, 27, (0, 0, 0), "nose_root", img_raw, landmarks)
+    #     if nose_tip:
+    #         region_list.append(nose_tip)
+    #     if nose_root:
+    #         region_list.append(nose_root)
 
 
     return img,region_list

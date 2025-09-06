@@ -1,15 +1,15 @@
 import cv2
 import numpy as np
 import os
-import insightface
-import mediapipe as mp
+# import insightface
+# import mediapipe as mp
 
 # ---------- 初始化 ----------
-face_app = insightface.app.FaceAnalysis(name='buffalo_l')
-face_app.prepare(ctx_id=-1)
+# face_app = insightface.app.FaceAnalysis(name='buffalo_l')
+# face_app.prepare(ctx_id=-1)
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, refine_landmarks=True)
+# mp_face_mesh = mp.solutions.face_mesh
+# face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, refine_landmarks=True)
 
 # ---------- 圖片資料夾設定 ----------
 input_folder = "images"
@@ -107,33 +107,33 @@ for filename in os.listdir(input_folder):
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     # InsightFace 偵測人臉
-    faces = face_app.get(img)
-    if not faces:
-        print(f"{filename}：❌ InsightFace 未偵測到人臉")
-        continue
+    # faces = face_app.get(img)
+    # if not faces:
+    #     print(f"{filename}：❌ InsightFace 未偵測到人臉")
+    #     continue
 
     # MediaPipe 偵測細節
-    results = face_mesh.process(img_rgb)
-    if not results.multi_face_landmarks:
-        print(f"{filename}：❌ MediaPipe 未偵測到臉部點位")
-        continue
+    # results = face_mesh.process(img_rgb)
+    # if not results.multi_face_landmarks:
+    #     print(f"{filename}：❌ MediaPipe 未偵測到臉部點位")
+    #     continue
 
-    landmarks = results.multi_face_landmarks[0]
+    # landmarks = results.multi_face_landmarks[0]
 
-    for organ, idx in organ_landmarks.items():
-        pt = landmarks.landmark[idx]
-        cx, cy = int(pt.x * w), int(pt.y * h)
-
-        crop_w, crop_h = organ_crop_sizes.get(organ, (64, 64))
-        x1 = max(cx - crop_w // 2, 0)
-        y1 = max(cy - crop_h // 2, 0)
-        x2 = min(cx + crop_w // 2, w)
-        y2 = min(cy + crop_h // 2, h)
-
-        cropped = img[y1:y2, x1:x2]
-        save_name = f"{os.path.splitext(filename)[0]}_{organ}.jpg"
-        save_path = os.path.join(output_folder, save_name)
-        cv2.imwrite(save_path, cropped)
+    # for organ, idx in organ_landmarks.items():
+    #     pt = landmarks.landmark[idx]
+    #     cx, cy = int(pt.x * w), int(pt.y * h)
+    #
+    #     crop_w, crop_h = organ_crop_sizes.get(organ, (64, 64))
+    #     x1 = max(cx - crop_w // 2, 0)
+    #     y1 = max(cy - crop_h // 2, 0)
+    #     x2 = min(cx + crop_w // 2, w)
+    #     y2 = min(cy + crop_h // 2, h)
+    #
+    #     cropped = img[y1:y2, x1:x2]
+    #     save_name = f"{os.path.splitext(filename)[0]}_{organ}.jpg"
+    #     save_path = os.path.join(output_folder, save_name)
+    #     cv2.imwrite(save_path, cropped)
 
 print("✅ 批次臟腑區域裁切完成，圖片儲存在 output_organs/")
 
