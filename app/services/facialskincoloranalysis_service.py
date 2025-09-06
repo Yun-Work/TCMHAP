@@ -44,7 +44,7 @@ except ImportError as e:
 
 class FaceRegion(Enum):
     FOREHEAD_UPPER = "額上1/3"  # 心
-    NOSE_BRIDGE_ROOT = "鼻根"  # 心（兼肝交會區）
+    NOSE_BRIDGE_ROOT = "鼻根，心兼肝交會"  # 心（兼肝交會區）
     CHEEK_UPPER_RIGHT = "右上頰"  # 肺
     # CHEEK_DUAL_UPPER = "雙頰"  # 肺
     NOSE_TIP = "鼻頭"  # 脾
@@ -53,14 +53,14 @@ class FaceRegion(Enum):
     NOSE_BRIDGE_MID = "鼻樑中段"  # 肝
     LEFT_UPPER_CHEEK = "左上頰"  # 肝
     NOSE_BRIDGE_OUTER = "鼻樑外側"  # 膽（已合併）
-    ZYGOMATIC_INNER = "顴骨內側"  # 小腸（已合併）
-    ZYGOMATIC_OUTER = "顴骨外側"  # 大腸（已合併）
+    ZYGOMATIC_INNER = "顴骨內"  # 小腸（已合併）
+    ZYGOMATIC_OUTER = "顴骨外"  # 大腸（已合併）
     # TEMPLE_TO_LOWER_CHEEK_LEFT = "太陽穴至下頰左"  # 腎
     # TEMPLE_TO_LOWER_CHEEK_RIGHT = "太陽穴至下頰右"  # 腎
-    CHIN = "下巴"  # 腎總區
-    LOWER_CHEEK = "下頰"  # 腎（已合併）
+    CHIN = "下巴"  # 腎區
+    LOWER_CHEEK = "下頰，腎"  # 腎（已合併）
     PHILTRUM = "人中"  # 膀胱
-    EYE_WHITE = "眼白"  # 肝膽代謝
+    EYE_WHITE = "氣輪，眼白"  # 肺
 
 
 class SkinCondition(Enum):
@@ -104,10 +104,10 @@ class FaceSkinAnalyzer:
             FaceRegion.ZYGOMATIC_OUTER: "大腸",  # 顴骨外側（已合併）
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: "腎",  # 太陽穴至下頰左
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: "腎",  # 太陽穴至下頰右
-            FaceRegion.CHIN: "腎",  # 下巴
-            FaceRegion.LOWER_CHEEK: "腎",  # 下頰（已合併）
+            FaceRegion.CHIN: "腎總區",  # 下巴
+            FaceRegion.LOWER_CHEEK: "生殖功能",  # 下頰，生殖功能（已合併）
             FaceRegion.PHILTRUM: "膀胱",  # 人中
-            FaceRegion.EYE_WHITE: "氣輪"  # 眼白
+            FaceRegion.EYE_WHITE: "肺"  # 氣輪，眼白
         }
         self.face_app = None
         self.face_mesh = None
