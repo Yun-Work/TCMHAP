@@ -1,16 +1,12 @@
 import cv2
-import json
-import base64
-from flask import Blueprint, request, jsonify, send_file
 from app.services.hologram_service import main
-import re
 from app.services.login_service import login_user
 from app.services.register_user_service import register_user
 # app/routers/user_router.py
 
 from flask import Blueprint, request, jsonify
 from app.db import get_db_session  # 取得 SQLAlchemy session
-from app.services.user_service import send_verification_code, verify_code, reset_password_with_code
+from app.services.user_service import send_verification_code, verify_code, reset_password_with_code,is_valid_password
 
 user_bp = Blueprint('user_bp', __name__)
 
@@ -30,26 +26,31 @@ def send_code():
 
     session = get_db_session()
     try:
-        if send_verification_code(session, email, status):
-            return jsonify({"message": "驗證碼已寄出"}), 200
+        result = send_verification_code(session, email, status)
+        if result.get("success"):
+            return jsonify({
+                "message": "驗證碼已寄出",
+                "user_id": result["user_id"]
+            }), 200
         else:
-            return jsonify({"error": "驗證碼寄送失敗"}), 400
+            return jsonify({"error": result.get("message", "驗證碼寄送失敗")}), 400
     finally:
         session.close()
+
 
 # 驗證驗證碼
 @user_bp.route('/verify_code', methods=['POST'])
 def verify():
     data = request.json
-    email = data.get("email")
+    user_id = data.get("user_id")
     code = data.get("code")
 
-    if not email or not code:
+    if not user_id or not code:
         return jsonify({"error": "缺少必要參數"}), 400
 
     session = get_db_session()
     try:
-        if verify_code(session, email, code):
+        if verify_code(session, user_id, code):
             return jsonify({"message": "驗證成功"}), 200
         else:
             return jsonify({"error": "驗證碼錯誤或已過期"}), 400
@@ -60,18 +61,17 @@ def verify():
 @user_bp.route('/reset_password', methods=['POST'])
 def reset_password():
     data = request.get_json(silent=True) or {}
-    email = data.get("email")
-    code = data.get("code")
+    user_id = data.get("user_id")
     new_password = data.get("new_password")
 
-    if not email or not code or not new_password:
+    if not user_id or not new_password:
         return jsonify({"error": "缺少必要參數"}), 400
-    if len(new_password) < 6:
-        return jsonify({"error": "密碼至少 6 碼"}), 400
+    if not is_valid_password(new_password):
+        return jsonify({"error": "密碼需至少6碼，且同時包含英文字母與數字"}), 400
 
     session = get_db_session()
     try:
-        ok = reset_password_with_code(session, email, code, new_password)
+        ok = reset_password_with_code(session, int(user_id), new_password)
         if ok:
             return jsonify({"message": "密碼已重設"}), 200
         else:

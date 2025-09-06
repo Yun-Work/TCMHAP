@@ -8,7 +8,7 @@ class VerifyCode(Base):
     __tablename__ = 'VerifyCode'
 
     vc_id = Column(Integer, primary_key=True, autoincrement=True)
-    email = Column(String(255), nullable=False, index=True)
-    code  = Column(String(6),   nullable=False)
-    expires_at = Column(DateTime,     nullable=False)
-
+    user_id = Column(Integer, nullable=False)
+    code  = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    verified_at = Column(DateTime, nullable=True, default=None)
