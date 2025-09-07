@@ -7,6 +7,8 @@ from app.services.register_user_service import register_user
 from flask import Blueprint, request, jsonify
 from app.db import get_db_session  # 取得 SQLAlchemy session
 from app.services.user_service import send_verification_code, verify_code, reset_password_with_code
+from werkzeug.security import generate_password_hash
+from app.models.users_model import User
 
 user_bp = Blueprint('user_bp', __name__)
 
@@ -143,7 +145,32 @@ def get_face_analyzer():
         print(f"創建 FaceSkinAnalyzer 實例時出錯: {e}")
         return None
 
+@user_bp.route('/change_password', methods=['POST'])
+def change_password():
+    data = request.get_json(silent=True) or {}
+    user_id = data.get("user_id")
+    new_password = data.get("new_password")
+    # 基本檢查
+    if not user_id or not new_password:
+        return jsonify({"success": False, "message": "缺少必要參數"})
+    if len(new_password) < 6:
+        return jsonify({"success": False, "message": "密碼至少 6 碼"})
+    session = get_db_session()
+    try:
+        # 查找使用者
+        user = session.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            return jsonify({"success": False, "message": "找不到使用者"})
+        # 更新新密碼（加密後存入）
+        user.password = generate_password_hash(new_password)
+        session.commit()
 
+        return jsonify({"success": True, "message": "密碼修改成功"}), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"success": False, "message": f"伺服器錯誤: {str(e)}"})
+    finally:
+        session.close()
 # 示例：如果需要在用戶路由中使用面部分析
 @user_bp.route('/face-test', methods=['POST'])
 def face_test():

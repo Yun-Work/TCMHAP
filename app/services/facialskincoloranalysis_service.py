@@ -13,21 +13,54 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import threading
 import functools
 
+try:
+    from app.services.mole_detection_service import (
+        MoleDetectionService,
+        detect_and_analyze_moles,
+        process_image_for_moles,
+        remove_beard_from_image
+    )
+
+    MOLE_DETECTION_AVAILABLE = True
+    print("痣檢測服務導入成功")
+except ImportError as e:
+    try:
+        # 嘗試相對導入
+        from .mole_detection_service import (
+            MoleDetectionService,
+            detect_and_analyze_moles,
+            process_image_for_moles,
+            remove_beard_from_image
+        )
+
+        MOLE_DETECTION_AVAILABLE = True
+        print("痣檢測服務導入成功（相對路徑）")
+    except ImportError as e2:
+        MOLE_DETECTION_AVAILABLE = False
+        MoleDetectionService = None
+        remove_beard_from_image = None
+        print(f"痣檢測服務導入失敗: {e}, {e2}")
+
 
 class FaceRegion(Enum):
-    HEART = "心"          # 額上1/3髮際、鼻根
-    LUNG = "肺"           # 眉間（印堂）、右上頰
-    LIVER = "肝"          # 鼻樑中段、左上頰
-    GALLBLADDER = "膽"    # 鼻樑外側高處、左上頰外緣
-    SPLEEN = "脾"         # 鼻頭
-    STOMACH = "胃"        # 鼻翼 [統一，不分左右]
-    SMALL_INTESTINE = "小腸"  # 顴骨下方內側（雙側）
-    LARGE_INTESTINE = "大腸"  # 顴骨下方外側（雙側）
-    KIDNEY = "腎"         # 太陽穴垂直下至耳垂交界、下頰
-    REPRODUCTIVE = "生殖（⼦宮/前列腺）" # 下頰、人中
-
-    # 特殊診斷區域
-    EYE_WHITE = "眼白"    # 肝膽代謝特例 [統一，不分左右]
+    FOREHEAD_UPPER = "額上1/3"  # 心
+    NOSE_BRIDGE_ROOT = "鼻根，心兼肝交會"  # 心（兼肝交會區）
+    CHEEK_UPPER_RIGHT = "右上頰"  # 肺
+    # CHEEK_DUAL_UPPER = "雙頰"  # 肺
+    NOSE_TIP = "鼻頭"  # 脾
+    NOSE_WING = "鼻翼"  # 胃（已合併）
+    YINTANG = "印堂"  # 肝
+    NOSE_BRIDGE_MID = "鼻樑中段"  # 肝
+    LEFT_UPPER_CHEEK = "左上頰"  # 肝
+    NOSE_BRIDGE_OUTER = "鼻樑外側"  # 膽（已合併）
+    ZYGOMATIC_INNER = "顴骨內"  # 小腸（已合併）
+    ZYGOMATIC_OUTER = "顴骨外"  # 大腸（已合併）
+    # TEMPLE_TO_LOWER_CHEEK_LEFT = "太陽穴至下頰左"  # 腎
+    # TEMPLE_TO_LOWER_CHEEK_RIGHT = "太陽穴至下頰右"  # 腎
+    CHIN = "下巴"  # 腎區
+    LOWER_CHEEK = "下頰，腎"  # 腎（已合併）
+    PHILTRUM = "人中"  # 膀胱
+    EYE_WHITE = "氣輪，眼白"  # 肺
 
 
 class SkinCondition(Enum):
@@ -38,9 +71,6 @@ class SkinCondition(Enum):
     PALE = "發白"
     YELLOW = "發黃"
     CYAN = "發青"
-
-
-
 
 
 class FaceSkinAnalyzer:
@@ -59,6 +89,26 @@ class FaceSkinAnalyzer:
         if hasattr(self, '_initialized'):
             return
 
+        self.region_locations = {
+            FaceRegion.FOREHEAD_UPPER: "心",  # 額上1/3髮際
+            FaceRegion.NOSE_BRIDGE_ROOT: "心",  # 鼻根
+            FaceRegion.CHEEK_UPPER_RIGHT: "肺",  # 右上頰
+            # FaceRegion.CHEEK_DUAL_UPPER: "肺",  # 雙頰
+            FaceRegion.NOSE_TIP: "脾",  # 鼻頭
+            FaceRegion.NOSE_WING: "胃",  # 鼻翼（已合併）
+            FaceRegion.YINTANG: "肝",  # 印堂（兩眉間）
+            FaceRegion.NOSE_BRIDGE_MID: "肝",  # 鼻樑中段
+            FaceRegion.LEFT_UPPER_CHEEK: "肝",  # 左上頰
+            FaceRegion.NOSE_BRIDGE_OUTER: "膽",  # 鼻樑外側（已合併）
+            FaceRegion.ZYGOMATIC_INNER: "小腸",  # 顴骨內側（已合併）
+            FaceRegion.ZYGOMATIC_OUTER: "大腸",  # 顴骨外側（已合併）
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: "腎",  # 太陽穴至下頰左
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: "腎",  # 太陽穴至下頰右
+            FaceRegion.CHIN: "腎總區",  # 下巴
+            FaceRegion.LOWER_CHEEK: "生殖功能",  # 下頰，生殖功能（已合併）
+            FaceRegion.PHILTRUM: "膀胱",  # 人中
+            FaceRegion.EYE_WHITE: "肺"  # 氣輪，眼白
+        }
         self.face_app = None
         self.face_mesh = None
         self.diagnosis_results = {}
@@ -72,34 +122,81 @@ class FaceSkinAnalyzer:
         self.init_detector()
 
     def _precompute_constants(self):
-        """預計算常量以提高性能"""
-        # 預計算器官landmarks和裁剪尺寸
+
+        # 修改標記點配置，使用多個點來定義合併區域
         self.organ_landmarks = {
-            FaceRegion.HEART: 10,  # 額上區域
-            FaceRegion.LUNG: 8,  # 眉間區域
-            FaceRegion.LIVER: 197,  # 鼻樑中段、左上頰
-            FaceRegion.GALLBLADDER: 4,  # 鼻樑外側高處
-            FaceRegion.SPLEEN: 168,  # 鼻頭
-            FaceRegion.STOMACH: 64,  # 鼻翼
-            FaceRegion.SMALL_INTESTINE: 294,  # 顴骨下方內側
-            FaceRegion.LARGE_INTESTINE: 330,  # 顴骨下方外側
-            FaceRegion.KIDNEY: 411,  # 太陽穴下至耳垂
-            FaceRegion.REPRODUCTIVE: 164,  # 下頰、人中
-            FaceRegion.EYE_WHITE: 33,  # 眼白區域
+            # 心
+            FaceRegion.FOREHEAD_UPPER: [10],  # 額上1/3髮際
+            FaceRegion.NOSE_BRIDGE_ROOT: [6],  # 鼻根
+
+            # 肺
+            FaceRegion.CHEEK_UPPER_RIGHT: [347],  # 右上頰
+
+            # 脾胃
+            FaceRegion.NOSE_TIP: [1],  # 鼻頭
+            FaceRegion.NOSE_WING: [48, 278],  # 鼻翼（已合併）
+
+            # 肝膽
+            FaceRegion.YINTANG: [8],  # 印堂
+            FaceRegion.NOSE_BRIDGE_MID: [197],  # 鼻樑中段
+            FaceRegion.LEFT_UPPER_CHEEK: [118],  # 左上頰
+            FaceRegion.NOSE_BRIDGE_OUTER: [174, 399],  # 鼻樑外側（已合併）
+
+            # 腸道系統
+            FaceRegion.ZYGOMATIC_INNER: [120, 349],  # 顴骨內側（已合併）
+            FaceRegion.ZYGOMATIC_OUTER: [116, 345],  # 顴骨外側（已合併）
+
+            # 腎
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: [143],  # 太陽穴至下頰左
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: [372],  # 太陽穴至下頰右
+            FaceRegion.CHIN: [175],  # 下巴（腎陰、腎陽、腎精）
+
+            # 生殖系統
+            FaceRegion.LOWER_CHEEK: [211, 431],  # 下頰（已合併）
+
+            # 泌尿系統
+            FaceRegion.PHILTRUM: [164],  # 人中
+
+            # 肝膽代謝
+            FaceRegion.EYE_WHITE: [474],  # 眼白（肝膽代謝）
         }
 
+        # 根據PDF「權毒部位的系統性」配置相應的裁切尺寸
         self.organ_crop_sizes = {
-            FaceRegion.HEART: (60, 40),  # 心：額上1/3區域
-            FaceRegion.LUNG: (40, 30),  # 肺：眉間區域
-            FaceRegion.LIVER: (35, 35),  # 肝：鼻樑中段、左上頰
-            FaceRegion.GALLBLADDER: (25, 25),  # 膽：鼻樑外側高處
-            FaceRegion.SPLEEN: (30, 25),  # 脾：鼻頭
-            FaceRegion.STOMACH: (25, 20),  # 胃：鼻翼
-            FaceRegion.SMALL_INTESTINE: (30, 25),  # 小腸：顴骨下方內側
-            FaceRegion.LARGE_INTESTINE: (30, 25),  # 大腸：顴骨下方外側
-            FaceRegion.KIDNEY: (40, 35),  # 腎：太陽穴下至耳垂
-            FaceRegion.REPRODUCTIVE: (35, 30),  # 生殖：下頰、人中
-            FaceRegion.EYE_WHITE: (25, 15),  # 眼白：鞏膜
+            # 心
+            FaceRegion.FOREHEAD_UPPER: (70, 50),  # 額上1/3區域
+            FaceRegion.NOSE_BRIDGE_ROOT: (30, 25),  # 鼻根
+
+            # 肺
+            FaceRegion.CHEEK_UPPER_RIGHT: (40, 35),  # 右上頰
+
+            # 脾胃
+            FaceRegion.NOSE_TIP: (35, 30),  # 鼻頭
+            FaceRegion.NOSE_WING: (50, 40),  # 鼻翼（合併區域，增大）
+
+            # 肝膽
+            FaceRegion.YINTANG: (35, 30),  # 印堂
+            FaceRegion.NOSE_BRIDGE_MID: (35, 40),  # 鼻樑中段
+            FaceRegion.LEFT_UPPER_CHEEK: (45, 40),  # 左上頰
+            FaceRegion.NOSE_BRIDGE_OUTER: (50, 60),  # 鼻樑外側（合併區域，增大）
+
+            # 腸道
+            FaceRegion.ZYGOMATIC_INNER: (60, 50),  # 顴骨內側（合併區域，增大）
+            FaceRegion.ZYGOMATIC_OUTER: (70, 60),  # 顴骨外側（合併區域，增大）
+
+            # 腎
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: (45, 60),  # 太陽穴至下頰左
+            # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: (45, 60),  # 太陽穴至下頰右
+            FaceRegion.CHIN: (40, 35),  # 下巴
+
+            # 生殖系統
+            FaceRegion.LOWER_CHEEK: (40, 40),  # 下頰（合併區域，增大）
+
+            # 泌尿系統
+            FaceRegion.PHILTRUM: (25, 35),  # 人中
+
+            # 肝膽代謝
+            FaceRegion.EYE_WHITE: (25, 15),  # 眼白
         }
 
         # 預計算顏色映射
@@ -281,14 +378,26 @@ class FaceSkinAnalyzer:
             return None
 
     def get_all_face_regions(self, landmarks, image_size):
-        """優化的面部區域獲取"""
+        """修改後的面部區域獲取，支持合併區域"""
         w, h = image_size
         regions = {}
 
-        # 向量化處理所有landmarks
-        for organ, idx in self.organ_landmarks.items():
-            pt = landmarks.landmark[idx]
-            cx, cy = int(pt.x * w), int(pt.y * h)
+        # 處理所有landmarks，包括合併區域
+        for organ, landmark_indices in self.organ_landmarks.items():
+            if len(landmark_indices) == 1:
+                # 單個標記點
+                pt = landmarks.landmark[landmark_indices[0]]
+                cx, cy = int(pt.x * w), int(pt.y * h)
+            else:
+                # 多個標記點，計算中心點
+                points = []
+                for idx in landmark_indices:
+                    pt = landmarks.landmark[idx]
+                    points.append((int(pt.x * w), int(pt.y * h)))
+
+                # 計算所有點的中心
+                cx = sum(p[0] for p in points) // len(points)
+                cy = sum(p[1] for p in points) // len(points)
 
             crop_w, crop_h = self.organ_crop_sizes[organ]
             x1 = max(cx - crop_w // 2, 0)
@@ -353,21 +462,18 @@ class FaceSkinAnalyzer:
         min_color = min(r, g, b)
 
         # 人中特殊處理：更容易判斷為發黑
-        if region == FaceRegion.REPRODUCTIVE:
-            if brightness < 100:  # 放寬閾值
+        if region == FaceRegion.PHILTRUM:
+            if brightness < 70:  # 放寬閾值
                 return SkinCondition.DARK
 
-
-        # 特殊處理眼白區域
+        # 眼白區域
         if region == FaceRegion.EYE_WHITE:
             total_color = r + g + b
             if total_color > 0:
                 yellow_ratio = (r + g) / (2 * total_color)
                 if yellow_ratio > 0.6 and g > 120:
-                    return SkinCondition.YELLOW  # 黃疸指標
-            return SkinCondition.NORMAL
-
-
+                    return SkinCondition.YELLOW  # 黃疸
+                return SkinCondition.NORMAL
 
         saturation = (max_color - min_color) / max_color if max_color > 0 else 0
 
@@ -379,12 +485,10 @@ class FaceSkinAnalyzer:
         else:
             red_ratio = green_ratio = blue_ratio = 0.33
 
-
-
         # 判斷膚色狀態
         if brightness < 70:
             return SkinCondition.DARK
-        elif brightness > 200 and min_color > 150 and saturation < 0.1:
+        elif brightness > 180 and min_color > 130 and saturation < 0.15:
             return SkinCondition.PALE
         elif red_ratio > 0.48 and r > 170 and saturation > 0.15:
             return SkinCondition.RED
@@ -440,7 +544,7 @@ class FaceSkinAnalyzer:
 
         # 選擇文字顏色
         text_color = (0, 0, 0) if condition in [SkinCondition.PALE, SkinCondition.YELLOW, SkinCondition.CYAN] else (
-        255, 255, 255)
+            255, 255, 255)
         cv2.putText(image, text, (x + 2, y - 2), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
 
     def optimized_grid_analysis(self, image):
@@ -486,7 +590,7 @@ class FaceSkinAnalyzer:
                     cv2.rectangle(out_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     replace_img[y1:y2, x1:x2] = avg_all
 
-        # 繪製網格線（向量化）
+        # 繪製網格線
         for i in range(1, grid_size):
             cv2.line(out_img, (0, i * cell_h), (w, i * cell_h), (0, 0, 0), 1)
         for j in range(1, grid_size):
@@ -498,8 +602,11 @@ class FaceSkinAnalyzer:
             'dark_blocks': replace_img
         }
 
-    def analyze_from_base64(self, base64_string):
-        """優化的base64分析主函數"""
+    # 在 facialskincoloranalysis_service.py 的 analyze_from_base64 方法中修改
+
+    def analyze_from_base64(self, base64_string, remove_moles=False, remove_beard=False):
+        print(f"Python分析方法接收參數 - remove_moles: {remove_moles}, remove_beard: {remove_beard}")
+
         try:
             # 清空上次結果
             self.diagnosis_results.clear()
@@ -507,7 +614,52 @@ class FaceSkinAnalyzer:
             self.current_face_rect = None
 
             # 轉換圖像
-            image = self.base64_to_image(base64_string)
+            original_image = self.base64_to_image(base64_string)
+
+            # 🔥 關鍵修改：先檢測鬍鬚（在原始圖像上）
+            beard_detected_originally = False
+            if MOLE_DETECTION_AVAILABLE and MoleDetectionService:
+                try:
+                    mole_detector = MoleDetectionService()
+                    has_beard, beards, _ = mole_detector.detect_beard_hair(original_image)
+                    beard_detected_originally = has_beard and len(beards) > 0
+                    print(f"原始圖像鬍鬚檢測結果: {beard_detected_originally}")
+                except Exception as e:
+                    print(f"鬍鬚檢測失敗: {e}")
+                    beard_detected_originally = False
+
+            # 痣檢測和處理（保持原有邏輯）
+            has_moles = False
+            mole_count = 0
+            processed_image = original_image
+
+            if MOLE_DETECTION_AVAILABLE and MoleDetectionService:
+                try:
+                    mole_detector = MoleDetectionService()
+
+                    # 根據用戶選擇決定是否移除鬍鬚
+                    if remove_beard:
+                        print("用戶選擇移除鬍鬚，先移除鬍鬚再分析")
+                        processed_image, beard_info = remove_beard_from_image(original_image)
+                    else:
+                        processed_image = original_image
+
+                    # 在處理後的圖像上檢測痣
+                    mole_analysis = mole_detector.comprehensive_mole_analysis(processed_image)
+                    has_moles = mole_analysis['has_dark_areas']
+                    mole_count = mole_analysis['summary']['spot_count']
+
+                    # 如果需要移除痣且檢測到了痣，使用處理後的圖像
+                    if remove_moles and has_moles:
+                        processed_image = mole_analysis['processed_image']
+
+                except Exception as e:
+                    print(f"特徵檢測失敗: {e}")
+                    has_moles = False
+                    mole_count = 0
+
+            # 使用處理後的圖像進行面部分析
+            image = processed_image
 
             # 檢測人臉
             face_data = self.detect_faces_with_landmarks(image)
@@ -515,13 +667,13 @@ class FaceSkinAnalyzer:
             if not face_data:
                 return {
                     "success": False,
-                    "error": "未能檢測到面部特徵點。\n\n請確保：\n• 臉部完整且清晰可見\n• 光線充足且均勻\n• 避免過暗或逆光\n• 正面頭頭\n\n調整後重新拍攝或選擇照片。",
-                    "original_image": base64_string,
-                    "annotated_image": None,
-                    "abnormal_only_image": None,
-                    "overall_color": None,
-                    "region_results": None,
-                    "grid_analysis": None
+                    "error": "未能檢測到面部特徵點。\n\n請確保：\n• 臉部完整且清晰可見\n• 光線充足且均勻\n• 避免過暗或逆光\n• 正面拍攝\n\n調整後重新拍攝或選擇照片。",
+                    "has_moles": has_moles,
+                    "has_beard": beard_detected_originally,  # 返回原始檢測結果
+                    "mole_analysis": {
+                        "mole_count": mole_count,
+                        "total_moles": mole_count
+                    }
                 }
 
             # 獲取面部信息
@@ -551,42 +703,37 @@ class FaceSkinAnalyzer:
                     condition = future.result()
                     self.diagnosis_results[region] = condition
 
-            # 並行處理圖像生成
-            def generate_annotated():
-                return self.draw_regions_vectorized(image, self.face_regions, self.diagnosis_results, True)
+            # 🔥 新增：如果移除了鬍鬚，將相關區域的診斷結果調整為正常
+            if remove_beard and beard_detected_originally:
+                # 鬍鬚影響的區域（使用合併後的區域名稱）
+                regions_to_normalize = [
+                    FaceRegion.LOWER_CHEEK,  # 下頰（合併）
+                    FaceRegion.CHIN
+                ]
 
-            def generate_abnormal():
-                return self.draw_regions_vectorized(image, self.face_regions, self.diagnosis_results, False)
+                for region in regions_to_normalize:
+                    if region in self.diagnosis_results:
+                        original_condition = self.diagnosis_results[region]
+                        self.diagnosis_results[region] = SkinCondition.NORMAL
 
-            def generate_grid():
-                return self.optimized_grid_analysis(image)
-
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                future_annotated = executor.submit(generate_annotated)
-                future_abnormal = executor.submit(generate_abnormal)
-                future_grid = executor.submit(generate_grid)
-
-                annotated_image, _ = future_annotated.result()
-                abnormal_only_image, abnormal_count = future_abnormal.result()
-                grid_results = future_grid.result()
+            # 計算異常區域數量
+            abnormal_count = sum(1 for condition in self.diagnosis_results.values()
+                                 if condition != SkinCondition.NORMAL)
 
             # 計算多個區域的平均顏色作為整體膚色
             def calculate_average_color(region_colors, representative_regions):
-                """計算多個區域的平均顏色"""
                 valid_colors = []
                 default_color = (153, 134, 117)
 
                 for region in representative_regions:
                     if region in region_colors:
                         color = region_colors[region]
-                        # 確保顏色值有效
                         if color and len(color) >= 3:
-                            valid_colors.append(color[:3])  # 只取RGB三個值
+                            valid_colors.append(color[:3])
 
                 if not valid_colors:
                     return default_color
 
-                # 計算平均值
                 avg_color = tuple(
                     int(sum(color[i] for color in valid_colors) / len(valid_colors))
                     for i in range(3)
@@ -594,61 +741,102 @@ class FaceSkinAnalyzer:
 
                 return avg_color
 
-            # 使用方式
-            representative_regions = [FaceRegion.HEART, FaceRegion.LUNG, FaceRegion.SPLEEN]
+            representative_regions = [FaceRegion.FOREHEAD_UPPER, FaceRegion.YINTANG, FaceRegion.NOSE_TIP]
             overall_color = calculate_average_color(region_colors, representative_regions)
 
-            # 並行轉換為base64
-            def convert_to_base64(img):
-                return self.image_to_base64(img)
+            # 構建所有區域結果（包含位置資訊）
+            all_regions = {}
+            for region, condition in self.diagnosis_results.items():
+                organ_name = region.value
+                location = self.region_locations.get(region, "")
+                key = f"{organ_name}({location})"
+                all_regions[key] = condition.value
 
-            with ThreadPoolExecutor(max_workers=4) as executor:
-                future_annotated_b64 = executor.submit(convert_to_base64, annotated_image)
-                future_abnormal_b64 = executor.submit(convert_to_base64, abnormal_only_image)
-                future_grid_b64 = executor.submit(convert_to_base64, grid_results['grid'])
-                future_dark_b64 = executor.submit(convert_to_base64, grid_results['dark_blocks'])
+            # 構建異常區域結果（包含位置資訊）
+            abnormal_regions = {}
+            for region, condition in self.diagnosis_results.items():
+                if condition != SkinCondition.NORMAL:
+                    organ_name = region.value
+                    location = self.region_locations.get(region, "")
+                    key = f"{organ_name}({location})"
+                    abnormal_regions[key] = condition.value
 
-                annotated_base64 = future_annotated_b64.result()
-                abnormal_only_base64 = future_abnormal_b64.result()
-                grid_base64 = future_grid_b64.result()
-                dark_blocks_base64 = future_dark_b64.result()
+            # 生成標註圖像和其他結果
+            try:
+                print("開始生成標註圖像...")
+                annotated_image_all, _ = self.draw_regions_vectorized(
+                    image, self.face_regions, self.diagnosis_results, draw_all=True
+                )
+                annotated_image_abnormal, _ = self.draw_regions_vectorized(
+                    image, self.face_regions, self.diagnosis_results, draw_all=False
+                )
+                print("標註圖像生成完成")
 
-            # 構建結果
-            all_regions = {region.value: condition.value for region, condition in self.diagnosis_results.items()}
-            abnormal_regions = {region.value: condition.value for region, condition in
-                                self.diagnosis_results.items() if condition != SkinCondition.NORMAL}
+                # 網格分析和圖像轉換（保持原有邏輯）
+                print("開始網格分析...")
+                grid_analysis = self.optimized_grid_analysis(image)
+                print("網格分析完成")
 
-            return {
-                "success": True,
-                "error": None,
-                "original_image": base64_string,
-                "annotated_image": annotated_base64,
-                "abnormal_only_image": abnormal_only_base64,
-                "abnormal_count": abnormal_count,
-                "overall_color": {
-                    "r": int(overall_color[2]),
-                    "g": int(overall_color[1]),
-                    "b": int(overall_color[0]),
-                    "hex": f"#{int(overall_color[2]):02X}{int(overall_color[1]):02X}{int(overall_color[0]):02X}"
-                },
-                "all_region_results": all_regions,
-                "region_results": abnormal_regions,
-                "grid_analysis": {
-                    "grid_image": grid_base64,
-                    "dark_blocks_image": dark_blocks_base64
+                # 轉換為 base64
+                print("轉換圖片為 base64...")
+
+                result = {
+                    "success": True,
+                    "error": None,
+                    "abnormal_count": abnormal_count,
+                    "overall_color": {
+                        "r": int(overall_color[2]),
+                        "g": int(overall_color[1]),
+                        "b": int(overall_color[0]),
+                        "hex": f"#{int(overall_color[2]):02X}{int(overall_color[1]):02X}{int(overall_color[0]):02X}"
+                    },
+                    "all_region_results": all_regions,
+                    "region_results": abnormal_regions,
+                    "has_moles": has_moles,
+                    "has_beard": beard_detected_originally,  # 返回原始檢測結果
+                    "moles_removed": remove_moles and has_moles,
+                    "beard_removed": remove_beard and beard_detected_originally,  # 基於原始檢測結果
+                    "original_image": self.image_to_base64(original_image),
+                    "annotated_image": self.image_to_base64(annotated_image_all),
+                    "abnormal_only_image": self.image_to_base64(annotated_image_abnormal),
+                    "mole_analysis": {
+                        "mole_count": mole_count,
+                        "total_moles": mole_count
+                    },
+                    "grid_analysis": {
+                        "grid_image": self.image_to_base64(grid_analysis['grid']),
+                        "dark_blocks_image": self.image_to_base64(grid_analysis['dark_blocks'])
+                    }
                 }
-            }
+
+                print(f"最終返回結果 - 異常區域數: {abnormal_count}, 鬍鬚已移除: {result['beard_removed']}")
+                return result
+
+            except Exception as e:
+                print(f"分析過程中發生錯誤: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    "success": False,
+                    "error": f"分析過程中發生錯誤：{str(e)}",
+                    "has_moles": has_moles,
+                    "has_beard": beard_detected_originally,
+                    "mole_analysis": {
+                        "mole_count": mole_count,
+                        "total_moles": mole_count
+                    }
+                }
 
         except Exception as e:
             return {
                 "success": False,
                 "error": f"分析過程中發生錯誤：{str(e)}",
-                "original_image": base64_string,
-                "annotated_image": None,
-                "abnormal_only_image": None,
-                "overall_color": None,
-                "region_results": None,
-                "grid_analysis": None
+                "has_moles": False,
+                "has_beard": False,
+                "mole_analysis": {
+                    "mole_count": 0,
+                    "total_moles": 0
+                }
             }
 
 
@@ -833,7 +1021,7 @@ def optimized_batch_face_analysis(input_folder="images", output_folder="face_ana
             "successful_analyses": success_count,
             "failed_analyses": fail_count,
             "success_rate": success_count / (success_count + fail_count) * 100 if (
-                                                                                              success_count + fail_count) > 0 else 0
+                                                                                          success_count + fail_count) > 0 else 0
         },
         "analysis_summary": {
             "images_with_abnormalities": len(abnormal_images),
@@ -868,7 +1056,7 @@ def optimized_batch_face_analysis(input_folder="images", output_folder="face_ana
         for organ, stats in organ_statistics.items():
             print(f"  - {organ}: {stats['count']} 次異常")
             for condition, count in stats['conditions'].items():
-                print(f"    └─ {condition}: {count} 次")
+                print(f"    └── {condition}: {count} 次")
 
     print(f"\n📁 結果保存在: {output_folder}")
     print(f"📄 最終報告: {report_path}")

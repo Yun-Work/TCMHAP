@@ -3,6 +3,16 @@
 根據PDF文檔內容，將面部區域膚色異常映射到對應的功能/病變導向
 """
 
+def extract_organ_name(region_with_location):
+    """
+    從包含位置資訊的區域名稱中提取純器官名稱
+    例如：'大腸(顴骨下方外側（雙側）)' -> '大腸'
+    """
+    if '(' in region_with_location:
+        return region_with_location.split('(')[0]
+    return region_with_location
+
+
 # 根據PDF文檔内容
 ORGAN_DIAGNOSIS_MAP = {
     "心": {
@@ -28,14 +38,6 @@ ORGAN_DIAGNOSIS_MAP = {
         "發紅": "消化負擔大，常見食後脹或腸胃不適"
     },
     "胃": {
-        "發紅": "胃酸多、胃炎，可能胃灼熱或口臭",
-        "發綠": "胃蠕動差，食物停久，餐後容易脹或胃痛"
-    },
-    "左胃": {
-        "發紅": "胃酸多、胃炎，可能胃灼熱或口臭",
-        "發綠": "胃蠕動差，食物停久，餐後容易脹或胃痛"
-    },
-    "右胃": {
         "發紅": "胃酸多、胃炎，可能胃灼熱或口臭",
         "發綠": "胃蠕動差，食物停久，餐後容易脹或胃痛"
     },
@@ -66,11 +68,11 @@ ORGAN_DIAGNOSIS_MAP = {
         "發黑": "腎功能下降，代謝廢物不佳，容易疲倦、水腫",
         "發綠": "水分代謝不良，下半身容易腫或沉重"
     },
-    "生殖（⼦宮/前列腺）": {
+    "生殖": {
         "發紅": "女生可能有子宮或前列腺發炎，經期疼痛或分泌物異常；男生排尿不適",
         "發黑": "慢性循環差，骨盆腔或前列腺鬱積"
     },
-    "左眼白": {
+    "眼白": {
         "發黃": "直接指向肝膽代謝異常，如肝炎、膽結石或膽道阻塞"
     },
     "右眼白": {
@@ -80,7 +82,7 @@ ORGAN_DIAGNOSIS_MAP = {
         "發紅": "可能心臟發炎、心跳快、壓力大，容易心悸或胸悶",
         "發黑": "血液循環不順，容易覺得缺氧、頭暈或疲倦"
     },
-    "下巴": {
+    "⼦宮/前列腺": {
         "發紅": "女生可能有子宮發炎，經期疼痛或分泌物異常；男生排尿不適",
         "發黑": "慢性循環差，骨盆腔或前列腺鬱積"
     }
@@ -106,16 +108,20 @@ def get_all_diagnoses(region_results):
     根據所有異常區域返回完整的診斷結果
     
     Args:
-        region_results (dict): 異常區域字典，格式為 {器官: 狀態}
-    
+        region_results (dict): 異常區域字典，格式為 {器官(位置): 狀態}
+
     Returns:
-        dict: 診斷結果字典，格式為 {器官: 診斷描述}
+        dict: 診斷結果字典，格式為 {器官(位置): 診斷資訊}
     """
     diagnoses = {}
-    for organ, condition in region_results.items():
-        diagnosis = get_diagnosis(organ, condition)
+    for region_with_location, condition in region_results.items():
+        # 提取純器官名稱用於匹配
+        organ_name = extract_organ_name(region_with_location)
+        diagnosis = get_diagnosis(organ_name, condition)
+
         if diagnosis:
-            diagnoses[organ] = {
+            diagnoses[region_with_location] = {
+                "organ": organ_name,
                 "condition": condition,
                 "diagnosis": diagnosis
             }
