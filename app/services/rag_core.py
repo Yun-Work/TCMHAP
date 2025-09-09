@@ -1,11 +1,6 @@
 # app/services/rag_core.py
 from __future__ import annotations
 
-"""
-純 RAG 核心模組（資料表/嵌入/檢索/生成）。
-⚠️ 不要在這裡 import 任何 Flask / Blueprint / 路由相關程式，避免循環匯入。
-"""
-
 __all__ = [
     "normalize_text",
     "clean_markdown",
@@ -25,10 +20,8 @@ import httpx
 from sqlalchemy import Column, String, Integer, DateTime, func, Index
 from sqlalchemy.orm import Session
 
-# ✅ 你的專案的 DB 物件
 from app.db import Base, engine, SessionLocal
 
-# ------- settings 載入（帶預設值保底，避免 import 阻擋） -------
 from pathlib import Path
 import importlib.util
 
@@ -47,42 +40,35 @@ def _load_settings():
 try:
     settings = _load_settings()
 except Exception as e:
-    # 不讓整個模組初始化失敗：給可工作的預設值
     class _Default:
         LLM_PROVIDER = "ollama"
         OLLAMA_BASE = "http://127.0.0.1:11434"
-        OLLAMA_MODEL = "llama3.1:8b"
+        OLLAMA_MODEL = "llama3.2:3b-instruct"
         EMBED_MODEL = "mxbai-embed-large"
         OPENAI_API_KEY = None
         OPENAI_MODEL = "gpt-4o-mini"
     settings = _Default()
     print(f"⚠️ rag_core: settings 載入失敗，改用預設值：{e}")
 
-# ------- ORM 定義 -------
-# 在 MySQL 用 LONGTEXT/JSON；若你改用其他 DB，可自行切換型別
 from sqlalchemy.dialects.mysql import LONGTEXT, JSON as MySQLJSON
 
 class RagChunk(Base):
     __tablename__ = "rag_chunks"
-
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
     source = Column(String(1024), nullable=False)
     chunk_idx = Column(Integer, nullable=False, default=0)
-    text = Column(LONGTEXT, nullable=False)       # 長文本
-    embedding = Column(MySQLJSON, nullable=False) # 向量用 JSON 儲存
+    text = Column(LONGTEXT, nullable=False)
+    embedding = Column(MySQLJSON, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
-# 索引（避免 InnoDB 長度限制，對 source 做前綴）
 Index("ix_rag_chunks_source", RagChunk.source, mysql_length=255)
 Index("ix_rag_chunks_idx", RagChunk.chunk_idx)
 
-# 建表：不要阻擋 import
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
     print(f"⚠️ rag_core: 建表略過（稍後初始化亦可），原因：{e}")
 
-# ------- 文本前處理/切塊 -------
 _whitespace_re = re.compile(r"\s+")
 _md_symbol_re = re.compile(r"[#*`>\-\d\.]+")
 
@@ -111,7 +97,7 @@ def split_text_iter(text: str, chunk_size: int, overlap: int) -> Iterator[str]:
             next_start = end
         start = next_start
 
-# ------- Embeddings -------
+# ---------- Embeddings ----------
 async def embed_texts(texts: List[str]) -> List[List[float]]:
     provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
     cleaned = [clean_markdown(t) for t in texts if t and str(t).strip()]
@@ -122,10 +108,7 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
         if provider == "openai":
             if not getattr(settings, "OPENAI_API_KEY", None):
                 raise RuntimeError("缺少 OPENAI_API_KEY")
-            headers = {
-                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            }
+            headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {"model": settings.EMBED_MODEL, "input": cleaned}
             async with httpx.AsyncClient(timeout=300) as client:
                 r = await client.post("https://api.openai.com/v1/embeddings", json=payload, headers=headers)
@@ -151,16 +134,13 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
                     raise RuntimeError("Ollama 回傳空 embedding")
                 results.append(emb)
         return results
-
     except Exception as e:
         raise RuntimeError(f"嵌入失敗：{e}") from e
 
-# ------- 資料寫入/Session -------
 def _session() -> Session:
     return SessionLocal()
 
 def add_documents(chunks: List[Dict]) -> int:
-    """chunks: [{'source','chunk','text','embedding'}]"""
     s = _session()
     inserted = 0
     try:
@@ -180,9 +160,8 @@ def add_documents(chunks: List[Dict]) -> int:
     finally:
         s.close()
 
-# ------- 檢索與生成 -------
+# ---------- Retrieve ----------
 async def retrieve(query: str, top_k: int = 4) -> List[Dict]:
-    """相似度排序檢索，回傳 [{text, metadata, score}]"""
     q_embs = await embed_texts([query])
     if not q_embs:
         return []
@@ -216,20 +195,20 @@ async def retrieve(query: str, top_k: int = 4) -> List[Dict]:
 
     hits: List[Dict] = []
     for i in idx:
-        hits.append({
-            "text": texts[i],
-            "metadata": metas[i],
-            "score": float(sim[i]),
-        })
+        hits.append({"text": texts[i], "metadata": metas[i], "score": float(sim[i])})
     return hits
 
+# ---------- Generate (OpenAI or Ollama) ----------
 async def generate_answer(query: str, contexts: List[Dict]) -> str:
-    """根據 contexts 生成回答（繁中）。加入 context 縮減與錯誤內容顯示。"""
-    provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
-
-    # ---- 縮小上下文（避免 500）----
-    TOTAL_BUDGET = 8000     # 總字元上限（可再降到 6000）
-    PER_CHUNK_CAP = 1500    # 每段上限
+    """
+    根據 contexts 生成回答（繁中）。
+    - settings.LLM_PROVIDER == 'openai' → 用 OpenAI
+    - 其它（預設 'ollama'）          → 用 Ollama
+    若 Ollama 失敗且有 OPENAI_API_KEY，會自動回退到 OpenAI。
+    """
+    # 上下文預處理
+    TOTAL_BUDGET = 12000
+    PER_CHUNK_CAP = 2000
 
     texts: List[str] = []
     total = 0
@@ -252,16 +231,18 @@ async def generate_answer(query: str, contexts: List[Dict]) -> str:
     )
     user = f"使用者問題：{query}\n\n（以下是文件內容，僅能依此作答）\n{context_block}"
 
-    if provider == "openai":
-        if not getattr(settings, "OPENAI_API_KEY", None):
-            raise RuntimeError("缺少 OPENAI_API_KEY")
-        headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}
+    provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
+
+    # ---- OpenAI 路徑 ----
+    async def _openai_call() -> str:
+        api_key = getattr(settings, "OPENAI_API_KEY", None)
+        if not api_key:
+            return ""
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {
-            "model": settings.OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "model": getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
             "temperature": 0.2,
         }
         async with httpx.AsyncClient(timeout=300) as client:
@@ -270,33 +251,40 @@ async def generate_answer(query: str, contexts: List[Dict]) -> str:
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
                 print(f"rag_core: OpenAI API 錯誤：{e.response.status_code} {e.response.text[:800]}")
-                return ""  # 不中斷流程
+                return ""
             data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
+            return (data.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
 
     # ---- Ollama 路徑 ----
-    base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
-    prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
-    # 限制輸出長度與上下文長度（避免 OOM）
-    options = {"temperature": 0.2, "num_predict": 160, "num_ctx": 2048}
+    async def _ollama_call() -> str:
+        base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
+        prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
+        options = {"temperature": 0.2, "num_predict": 512, "num_ctx": 4096}
+        payload = {
+            "model": getattr(settings, "OLLAMA_MODEL", "llama3.2"),
+            "prompt": prompt,
+            "stream": False,
+            "options": options,
+        }
+        print(f"rag_core: call Ollama generate model={payload['model']} ctx_chars={len(context_block)} base={base}")
+        async with httpx.AsyncClient(timeout=600) as client:
+            r = await client.post(f"{base}/api/generate", json=payload)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text
+                print(f"rag_core: Ollama /api/generate 錯誤 {e.response.status_code}: {body[:1000]}")
+                return ""
+            data = r.json()
+            return (data.get("response") or "").strip()
 
-    payload = {
-        "model": getattr(settings, "OLLAMA_MODEL", "llama3.2:3b-instruct"),
-        "prompt": prompt,
-        "stream": False,
-        "options": options,
-    }
+    # 執行（依 provider）
+    if provider == "openai":
+        return await _openai_call()
 
-    print(f"rag_core: call Ollama generate model={payload['model']} ctx_chars={len(context_block)} base={base}")
-
-    async with httpx.AsyncClient(timeout=600) as client:
-        r = await client.post(f"{base}/api/generate", json=payload)
-        try:
-            r.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            # 印出伺服器回應內容（常見：model not found / not enough memory）
-            body = e.response.text
-            print(f"rag_core: Ollama /api/generate 錯誤 {e.response.status_code}: {body[:1000]}")
-            return ""  # 不中斷流程
-        data = r.json()
-        return (data.get("response") or "").strip()
+    # 預設：Ollama，失敗再回退到 OpenAI
+    txt = await _ollama_call()
+    if not txt:
+        fallback = await _openai_call()
+        return fallback or ""
+    return txt
