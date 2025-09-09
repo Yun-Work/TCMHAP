@@ -6,7 +6,7 @@ from app.services.register_user_service import register_user
 
 from flask import Blueprint, request, jsonify
 from app.db import get_db_session  # 取得 SQLAlchemy session
-from app.services.user_service import send_verification_code, verify_code, reset_password_with_code,is_valid_password
+from app.services.user_service import send_verification_code, verify_code_by_user,verify_code_by_email, reset_password_with_code,is_valid_password
 
 user_bp = Blueprint('user_bp', __name__)
 
@@ -17,21 +17,40 @@ def status():
 # 傳送驗證碼
 @user_bp.route('/send_code', methods=['POST'])
 def send_code():
-    data = request.json
-    email = data.get("email")
-    status = data.get("status")  # "1" for register, "2" for forget password
+    data = request.get_json(silent=True) or {}
+    status  = (data.get("status") or "").strip()   # "1" 註冊，"2" 忘記密碼
+    email   = (data.get("email") or "").strip()
+    user_id = data.get("user_id")                  # 忘記密碼可直接帶 user_id（可選）
 
-    if not email or not status:
+    if not status:
         return jsonify({"error": "缺少必要參數"}), 400
 
     session = get_db_session()
     try:
-        result = send_verification_code(session, email, status)
+        if status == "1":
+            # 註冊：一定要有 email
+            if not email:
+                return jsonify({"error": "缺少 email"}), 400
+            result = send_verification_code(session, status="1", email=email)
+
+        elif status == "2":
+            # 忘記密碼：email 或 user_id 擇一（若只給 email，後端會反查 user_id）
+            if not (email or user_id):
+                return jsonify({"error": "缺少 email 或 user_id"}), 400
+            result = send_verification_code(
+                session,
+                status="2",
+                email=email if email else None,
+                user_id=user_id
+            )
+        else:
+            return jsonify({"error": "未知的驗證狀態"}), 400
+
         if result.get("success"):
-            return jsonify({
-                "message": "驗證碼已寄出",
-                "user_id": result["user_id"]
-            }), 200
+            resp = {"message": result.get("message", "驗證碼已寄出")}
+            if "user_id" in result:  # 只有忘記密碼流程才會帶回
+                resp["user_id"] = result["user_id"]
+            return jsonify(resp), 200
         else:
             return jsonify({"error": result.get("message", "驗證碼寄送失敗")}), 400
     finally:
@@ -40,17 +59,34 @@ def send_code():
 
 # 驗證驗證碼
 @user_bp.route('/verify_code', methods=['POST'])
-def verify():
-    data = request.json
-    user_id = data.get("user_id")
-    code = data.get("code")
+def verify_code_api():
+    data   = request.get_json(silent=True) or {}
+    status = (data.get("status") or "").strip()
+    code   = (data.get("code")   or "").strip()
 
-    if not user_id or not code:
+    if not status or not code:
         return jsonify({"error": "缺少必要參數"}), 400
 
     session = get_db_session()
     try:
-        if verify_code(session, user_id, code):
+        if status == "1":
+            # 註冊：email + code
+            email = (data.get("email") or "").strip()
+            if not email:
+                return jsonify({"error": "缺少 email"}), 400
+            ok = verify_code_by_email(session, email, code)
+
+        elif status == "2":
+            # 忘記密碼：user_id + code
+            user_id = data.get("user_id")
+            if not user_id:
+                return jsonify({"error": "缺少 user_id"}), 400
+            ok = verify_code_by_user(session, int(user_id), code)
+
+        else:
+            return jsonify({"error": "未知的驗證狀態"}), 400
+
+        if ok:
             return jsonify({"message": "驗證成功"}), 200
         else:
             return jsonify({"error": "驗證碼錯誤或已過期"}), 400
