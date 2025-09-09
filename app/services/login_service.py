@@ -15,12 +15,14 @@ def login_user(email, password):
     if not is_valid_email(email):
         return {
             'success': False,
+            "code": "INVALID_EMAIL",
             'message': 'Email 格式錯誤'
         }
 
     if not is_valid_password(password):
         return {
             'success': False,
+            "code": "INVALID_PASSWORD_FORMAT",
             'message': '密碼需包含英文與數字，且至少6位'
         }
     # 開始查詢資料庫
@@ -32,6 +34,7 @@ def login_user(email, password):
         if user and check_password_hash(user.password, password):
             return {
                 "success": True,
+                "code": "OK",
                 "message": "登入成功",
                 "user": {
                     "user_id": user.user_id,
@@ -42,7 +45,7 @@ def login_user(email, password):
                 }
             }
         else:
-            return {'success': False, 'message': '帳號或密碼錯誤'}
+            return {'success': False, "code": "AUTH_FAILED",'message': '帳號或密碼錯誤'}
 
     except Exception as e:
-        return {'success': False, 'message': f'資料庫錯誤：{str(e)}'}
+        return {'success': False, "code": "SERVER_ERROR",'message': f'資料庫錯誤：{str(e)}'}

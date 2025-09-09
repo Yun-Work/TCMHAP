@@ -106,18 +106,31 @@ def register():
 
     # 其他未分類錯誤（資料庫或內部錯誤）
     return jsonify({"success": False, "code": "SERVER_ERROR", "message": res.get("message")}), 500
-#登入API
+# 登入 API
 @user_bp.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    email = data.get('email')
-    password = data.get('password')
+    data = request.get_json() or {}
+    res = login_user(
+        email=data.get("email"),
+        password=data.get("password")
+    )
 
-    if not email or not password:
-        return jsonify({'message': '請輸入帳號與密碼'}), 400
+    # 成功 → 200
+    if res.get("success") is True:
+        return jsonify(res), 200
 
-    result = login_user(email, password)
-    return jsonify(result), 200 if result['success'] else 401
+    # 失敗情境 → 比照註冊 API 的分類
+    code = res.get("code", "")
+    msg  = (res.get("message") or "").lower()
+
+    if code in ("INVALID_EMAIL", "INVALID_PASSWORD_FORMAT"):
+        return jsonify({"success": False, "code": code, "message": res.get("message")}), 200
+
+    if code == "AUTH_FAILED" or "帳號或密碼" in msg:
+        return jsonify({"success": False, "code": "AUTH_FAILED", "message": "帳號或密碼錯誤"}), 200
+
+    # 其他未分類錯誤（資料庫或內部錯誤）
+    return jsonify({"success": False, "code": "SERVER_ERROR", "message": res.get("message")}), 500
 
 # 臉部全息位置、清除障礙物的RestfulAPI(參考此程式)
 @user_bp.route('/hologram', methods=['POST'])
