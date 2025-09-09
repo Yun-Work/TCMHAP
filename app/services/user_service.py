@@ -1,7 +1,9 @@
 # app/services/user_service.py
-
+import re
 import random
 from datetime import datetime, timedelta
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from werkzeug.security import generate_password_hash
 
@@ -10,67 +12,117 @@ from app.models.verifycode_model import VerifyCode
 from app.utils.mail_util import send_email
 
 
-
-#產生驗證碼
 def generate_code(length=6) -> str:
     return ''.join(random.choices('0123456789', k=length))
 
-#檢查 Email 是否註冊
-def is_email_registered(session: Session, email: str) -> bool:
-    return session.query(User).filter_by(email=email).first() is not None
+def get_user_by_email(session: Session, email: str):
+    return session.query(User).filter_by(email=email).first()
 
-#發送驗證碼
-def send_verification_code(session: Session, email: str, status: str) -> bool:
-    if status == "1":  # 註冊流程：不允許已註冊者
-        if is_email_registered(session, email):
-            print("Email 已註冊，無法重複註冊")
-            return False
+def delete_active_codes(session: Session, *, user_id=None, email=None) -> None:
+    if (user_id is None) == (email is None):
+        raise ValueError("須指定 user_id 或 email 其中一個")
+    q = session.query(VerifyCode).filter(VerifyCode.expires_at > func.utc_timestamp())
+    q = q.filter(VerifyCode.user_id == user_id) if user_id is not None else q.filter(VerifyCode.email == email)
+    q.delete(synchronize_session=False)
 
-    elif status == "2":  # 忘記密碼流程：必須已註冊
-        if not is_email_registered(session, email):
-            print("Email 尚未註冊，請先註冊")
-            return False
-
-    else:
-        print("未知的驗證狀態")
-        return False
-
-
-    code = generate_code()
-    expires = datetime.utcnow() + timedelta(minutes=10)
-
-    record = VerifyCode(email=email, code=code, expires_at=expires)
-    session.add(record)
-    session.commit()
-
+def send_verification_code(session: Session, *, status: str, email: str = None, user_id: int = None) -> dict:
     try:
-        send_email(email, code)
-        return True
+        if status == "1":  # 註冊：用 email
+            if not email:
+                return {"success": False, "message": "缺少 email"}
+            if get_user_by_email(session, email):
+                return {"success": False, "message": "Email 已註冊，無法重複註冊"}
+
+            delete_active_codes(session, email=email)
+            code = generate_code()
+            rec = VerifyCode(email=email, code=code,
+                             expires_at=datetime.utcnow() + timedelta(minutes=10))
+            session.add(rec); session.commit()
+            send_email(email, code)
+            return {"success": True, "message": "驗證碼已寄出"}
+
+        elif status == "2":  # 忘記密碼：必須已註冊
+            if not (email or user_id):
+                return {"success": False, "message": "缺少 email 或 user_id"}
+
+            if user_id is None:
+                user = get_user_by_email(session, email or "")
+                if not user:
+                    return {"success": False, "message": "Email 尚未註冊"}
+                user_id = getattr(user, "user_id", None) or getattr(user, "id", None)
+                email = user.email  # 用於寄信
+
+            delete_active_codes(session, user_id=user_id)
+            code = generate_code()
+            rec = VerifyCode(user_id=user_id, code=code,
+                             expires_at=datetime.utcnow() + timedelta(minutes=10))
+            session.add(rec); session.commit()
+
+            if email:
+                send_email(email, code)
+            return {"success": True, "message": "驗證碼已寄出", "user_id": user_id}
+
+        else:
+            return {"success": False, "message": "未知的驗證狀態"}
+
     except Exception as e:
-        print("發送 Email 失敗：", e)
+        session.rollback()
+        return {"success": False, "message": f"發送 Email 失敗：{e}"}
+
+# 註冊：email + code
+def verify_code_by_email(session: Session, email: str, code: str) -> bool:
+    rec = (session.query(VerifyCode)
+           .filter(VerifyCode.email == email,
+                   VerifyCode.code == code,
+                   VerifyCode.expires_at > func.utc_timestamp())
+           .order_by(VerifyCode.vc_id.desc())
+           .first())
+    if not rec:
+        return False
+    rec.verified_at = func.utc_timestamp()
+    session.commit()
+    return True
+
+# 忘記密碼：user_id + code
+def verify_code_by_user(session: Session, user_id: int, code: str) -> bool:
+    rec = (session.query(VerifyCode)
+           .filter(VerifyCode.user_id == user_id,
+                   VerifyCode.code == code,
+                   VerifyCode.expires_at > func.utc_timestamp())
+           .order_by(VerifyCode.vc_id.desc())
+           .first())
+    if not rec:
+        return False
+    rec.verified_at = func.utc_timestamp()
+    session.commit()
+    return True
+
+def is_valid_password(pwd: str) -> bool:
+    return bool(pwd and len(pwd) >= 6 and re.search(r'[A-Za-z]', pwd) and re.search(r'\d', pwd))
+
+RESET_WINDOW_MINUTES = 10
+
+def reset_password_with_code(session: Session, user_id: int, new_password: str) -> bool:
+    if not is_valid_password(new_password):
         return False
 
+    window_start = datetime.utcnow() - timedelta(minutes=RESET_WINDOW_MINUTES)
 
-#驗證使用者輸入的驗證碼是否正確且未過期
-def verify_code(session: Session, email: str, code: str) -> bool:
+    rec = (session.query(VerifyCode)
+           .filter(VerifyCode.user_id == user_id,
+                   VerifyCode.verified_at.isnot(None),
+                   VerifyCode.verified_at > window_start)
+           .order_by(VerifyCode.vc_id.desc())
+           .first())
+    if not rec:
+        return False
 
-    record = session.query(VerifyCode).filter_by(email=email, code=code).first()
-    if record and record.expires_at > datetime.utcnow():
-        return True
-    return False
-
-
-# 重設密碼
-def reset_password_with_code(session: Session, email: str, code: str, new_password: str) -> bool:
-
-    # 找使用者並設定新密碼（雜湊）
-    user = session.query(User).filter_by(email=email).first()
+    user = session.get(User, user_id)
     if not user:
-        print("找不到使用者")
         return False
 
     user.password = generate_password_hash(new_password)
-    session.add(user)
 
+    session.query(VerifyCode).filter(VerifyCode.user_id == user_id).delete(synchronize_session=False)
     session.commit()
     return True
