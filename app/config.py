@@ -17,8 +17,8 @@ MYSQL_CONFIG = {
 # 郵件設定 (Gmail SMTP) — 從環境變數讀
 # ======================
 GMAIL_SMTP_CONFIG = {
-    "sender_email": os.getenv("GMAIL_SENDER_EMAIL"),
-    "sender_password": os.getenv("GMAIL_SENDER_PASSWORD"),
+    "sender_email": "tkuim2025@gmail.com",
+    "sender_password": "vcuf rchb jraj wgst",
 }
 
 # ======================
