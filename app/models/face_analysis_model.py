@@ -11,5 +11,4 @@ class FaceAnalysis(Base):
     face = Column(String(5), nullable=False)          # 臉部位置（可直接存「右上頰」「鼻根」等）
     organ = Column(String(5), nullable=False)         # 對應臟腑（如「肺」「心」「肝」…）
     status = Column(String(5), nullable=False)        # 發紅/發黑/正常…（<=5字即可）
-    message = Column(Text, nullable=True)             # 本次建議或備註
     analysis_date = Column(DateTime, server_default=func.now(), nullable=False)
