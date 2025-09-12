@@ -37,6 +37,10 @@ def get_status_bar(session: Session, organ_name: str, start: date, end: date) ->
             FROM sys_code
             WHERE code_type='status'
             ORDER BY code_id
+            
+            
+            
+            
         """)
     ).mappings().all()
 

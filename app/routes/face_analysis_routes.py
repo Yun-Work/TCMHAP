@@ -4,6 +4,7 @@ import traceback
 from datetime import datetime
 from typing import Dict
 
+import re
 import cv2
 import numpy as np
 from flask import Blueprint, request, jsonify
@@ -287,14 +288,41 @@ def upload_and_analyze():
                 area_map = result.get("region_results") or {}
                 now = datetime.utcnow()
 
+                import re
+
                 def _split_area_label(area: str) -> tuple[str, str]:
+                    """
+                    輸入字串像：
+                      "腎(生殖功能)"     → ("腎", "生殖功能")
+                      "鼻根(心與肝交會)" → ("鼻根", "心與肝交會")
+                      "下頰(腎(生殖功能))" → ("下頰", "腎(生殖功能)")
+                      "顴外"              → ("顴外", "")
+
+                    - 自動轉換全形括號（（ ））為半形
+                    - 只取「最外層」第一組括號，避免殘留 ")("
+                    """
                     if not area:
                         return "", ""
-                    area = area.strip()
-                    if "(" in area and area.endswith(")"):
-                        base, organ = area.split("(", 1)
-                        return base.strip()[:5], organ[:-1].strip()[:5]
-                    return area[:5], ""
+
+                    # 全形括號轉半形
+                    s = area.strip().replace("（", "(").replace("）", ")")
+
+                    # 抓最外層第一組括號
+                    m = re.match(r'^([^()]+?)\s*\(([^()]*)\)', s)
+                    if not m:
+                        return s, ""
+
+                    base = m.group(1).strip()
+                    organ_raw = m.group(2).strip()
+
+                    # 如果 organ 裡還有括號（例如 "腎(生殖功能)"），再拆一次
+                    n = re.match(r'^([^()]+?)\s*\(([^()]*)\)', organ_raw)
+                    if n:
+                        organ = f"{n.group(1).strip()}({n.group(2).strip()})"
+                    else:
+                        organ = organ_raw
+
+                    return base, organ
 
                 rows = []
                 for area, status_str in area_map.items():

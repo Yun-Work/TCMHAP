@@ -105,7 +105,7 @@ class FaceSkinAnalyzer:
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: "腎",  # 太陽穴至下頰左
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: "腎",  # 太陽穴至下頰右
             FaceRegion.CHIN: "腎總區",  # 下巴
-            FaceRegion.LOWER_CHEEK: "腎(生殖功能)",  # 下頰，生殖功能（已合併）
+            FaceRegion.LOWER_CHEEK: "腎生殖功能",  # 下頰，生殖功能（已合併）
             FaceRegion.PHILTRUM: "膀胱",  # 人中
             FaceRegion.EYE_WHITE: "肺"  # 氣輪，眼白
         }
