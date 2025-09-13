@@ -1,7 +1,7 @@
 # app/services/user_service.py
 import re
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,date
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -126,3 +126,80 @@ def reset_password_with_code(session: Session, user_id: int, new_password: str) 
     session.query(VerifyCode).filter(VerifyCode.user_id == user_id).delete(synchronize_session=False)
     session.commit()
     return True
+
+
+def _normalize_gender(g: str | None) -> str | None:
+    if g is None:
+        return None
+    s = str(g).strip().lower()
+    if s in ("m", "male", "男", "男生"): return "male"
+    if s in ("f", "female", "女", "女生"): return "female"
+    raise ValueError("性別僅允許 male/female（可傳 男/女 或 M/F）")
+
+def _parse_birth_date(s: str | None) -> date | None:
+    if not s: return None
+    s = s.strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    raise ValueError("生日格式需為 YYYY-MM-DD 或 YYYY/MM/DD")
+
+def get_user_profile(session: Session, user_id: int) -> dict | None:
+    user = session.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        return None
+    return {
+        "user_id": user.user_id,
+        "email": user.email,
+        "name": user.name or "",
+        "gender": user.gender or "",  # 建議存/回 'male' / 'female'
+        "birth_date": user.birth_date.strftime("%Y-%m-%d") if user.birth_date else ""
+    }
+
+def update_user_profile(
+    session: Session,
+    *,
+    user_id: int,
+    name: str | None = None,
+    gender: str | None = None,
+    birth_date_str: str | None = None
+) -> dict:
+    user = session.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        return {"success": False, "code": "NOT_FOUND", "message": "找不到使用者"}
+
+    try:
+        if name is not None:
+            name = name.strip()
+            if not (2 <= len(name) <= 100):
+                return {"success": False, "code": "BAD_REQUEST", "message": "使用者名稱需為 2~100 個字"}
+
+        bd = None
+        if birth_date_str is not None:
+            bd = _parse_birth_date(birth_date_str)
+            if bd > date.today():
+                return {"success": False, "code": "BAD_REQUEST", "message": "生日不可晚於今天"}
+            if bd < date(1900, 1, 1):
+                return {"success": False, "code": "BAD_REQUEST", "message": "生日不可早於 1900-01-01"}
+
+        gnorm = None
+        if gender is not None:
+            gnorm = _normalize_gender(gender)
+    except ValueError as e:
+        return {"success": False, "code": "BAD_REQUEST", "message": str(e)}
+
+    try:
+        if name is not None:
+            user.name = name
+        if gnorm is not None:
+            user.gender = gnorm
+        if birth_date_str is not None:
+            user.birth_date = bd
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        return {"success": False, "code": "SERVER_ERROR", "message": f"儲存失敗：{e}"}
+
+    return {"success": True, "data": get_user_profile(session, int(user_id))}

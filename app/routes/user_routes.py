@@ -1,12 +1,13 @@
+# app/routers/user_router.py
 import cv2
 from app.services.hologram_service import main
 from app.services.login_service import login_user
 from app.services.register_user_service import register_user
-# app/routers/user_router.py
 
 from flask import Blueprint, request, jsonify
 from app.db import get_db_session  # 取得 SQLAlchemy session
-from app.services.user_service import send_verification_code, verify_code_by_user,verify_code_by_email, reset_password_with_code,is_valid_password
+from app.services.user_service import send_verification_code, verify_code_by_user, verify_code_by_email, \
+    reset_password_with_code, is_valid_password, update_user_profile, get_user_profile
 from werkzeug.security import generate_password_hash
 from app.models.users_model import User
 
@@ -94,27 +95,6 @@ def verify_code_api():
     finally:
         session.close()
 
-# 重設密碼
-@user_bp.route('/reset_password', methods=['POST'])
-def reset_password():
-    data = request.get_json(silent=True) or {}
-    user_id = data.get("user_id")
-    new_password = data.get("new_password")
-
-    if not user_id or not new_password:
-        return jsonify({"error": "缺少必要參數"}), 400
-    if not is_valid_password(new_password):
-        return jsonify({"error": "密碼需至少6碼，且同時包含英文字母與數字"}), 400
-
-    session = get_db_session()
-    try:
-        ok = reset_password_with_code(session, int(user_id), new_password)
-        if ok:
-            return jsonify({"message": "密碼已重設"}), 200
-        else:
-            return jsonify({"error": "驗證碼錯誤或已過期"}), 400
-    finally:
-        session.close()
 
 #註冊API
 @user_bp.route('/register', methods=['POST'])
@@ -246,3 +226,53 @@ def face_test():
             'success': False,
             'error': f'測試失敗: {str(e)}'
         }), 500
+
+# 取得個人資料
+@user_bp.route('/get_profile', methods=['POST'])
+def profile_get_post():
+    data = request.get_json(silent=True) or {}
+    uid = data.get("user_id")
+    if not uid:
+        return jsonify({"error": "缺少 user_id"}), 400
+
+    session = get_db_session()
+    try:
+        profile = get_user_profile(session, int(uid))
+        if profile is None:
+            return jsonify({"error": "找不到使用者"}), 404
+
+        return jsonify(profile), 200
+    finally:
+        session.close()
+
+
+# 修改個人資料（僅更新有帶的欄位）
+@user_bp.route('/update_profile', methods=['POST'])
+def profile_update_post():
+    payload = request.get_json(silent=True) or {}
+    uid = payload.get("user_id")
+    if not uid:
+        return jsonify({"error": "缺少 user_id"}), 400
+
+    session = get_db_session()
+    try:
+        res = update_user_profile(
+            session,
+            user_id=int(uid),
+            name=payload.get("name"),
+            gender=payload.get("gender"),       # "male"/"female" 或 "男"/"女" 皆可
+            birth_date_str=payload.get("birth_date")  # "YYYY-MM-DD" 或 "YYYY/MM/DD"
+        )
+
+        if res.get("success"):
+            return jsonify(res["data"]), 200
+
+        code = res.get("code")
+        msg  = res.get("message", "更新失敗")
+        if code == "BAD_REQUEST":
+            return jsonify({"error": msg}), 400
+        if code == "NOT_FOUND":
+            return jsonify({"error": msg}), 404
+        return jsonify({"error": msg}), 500
+    finally:
+        session.close()
