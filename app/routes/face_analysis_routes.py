@@ -3,12 +3,11 @@ import base64
 import traceback
 from datetime import datetime
 from typing import Dict
-
+from sqlalchemy import text
 import re
 import cv2
 import numpy as np
 from flask import Blueprint, request, jsonify
-
 from app.db import SessionLocal
 from app.models.face_analysis_model import FaceAnalysis
 # ✅ 改為統一呼叫新的 RAG 服務（同步介面，內部自己處理 async）
@@ -109,6 +108,75 @@ def process_beard_removal(image_data: str) -> str | None:
     except Exception as e:
         print(f"鬍鬚移除錯誤: {e}")
         return None
+def load_code_maps(session):
+    """
+    從 sys_code 一次撈出 face/organ/status 的 name→code_id 對照表（字典）
+    回傳: (face_map, organ_map, status_map)；value 直接轉為字串，便於寫入你現有的 VARCHAR 欄位
+    """
+    rows = session.execute(text("""
+        SELECT code_type, code_id, code_name
+        FROM sys_code
+    """)).fetchall()
+
+    face_map, organ_map, status_map = {}, {}, {}
+    for code_type, code_id, code_name in rows:
+        name = (code_name or "").strip()
+        if code_type == "face":
+            face_map[name] = str(code_id)
+        elif code_type == "organ":
+            organ_map[name] = str(code_id)
+        elif code_type == "status":
+            status_map[name] = str(code_id)
+    return face_map, organ_map, status_map
+
+
+# 只把「最後一段括號」視為臟腑；前面全部保留給權息點名稱
+# 例： "鼻根(心與肝交會)(心)" → face="鼻根(心與肝交會)" , organ="心"
+_SPLIT_PATTERN = re.compile(r"^(?P<face>.+)\((?P<organ>[^()]+)\)$")
+
+def split_area_label_exact(area: str) -> tuple[str, str]:
+    """
+    將像 '鼻翼(胃)'、'鼻根(心與肝交會)(心)'、'下頰(腎(生殖功能))' 這類字串
+    分成 (face_name, organ_name)。能處理巢狀括號。
+    """
+    if not area:
+        return "", ""
+    s = area.strip()
+    if not s.endswith(')'):
+        return s, ""  # 沒有以 ) 結尾，視為無 organ
+
+    # 從尾端回掃，找到與最後一個 ')' 對應的 '('
+    depth = 0
+    open_idx = -1
+    for i in range(len(s) - 1, -1, -1):
+        c = s[i]
+        if c == ')':
+            depth += 1
+        elif c == '(':
+            depth -= 1
+            if depth == 0:
+                open_idx = i
+                break
+
+    if open_idx == -1:
+        # 括號不成對，當成無 organ
+        return s, ""
+
+    face_name = s[:open_idx].strip()
+    organ_name = s[open_idx + 1:-1].strip()
+    return face_name, organ_name
+
+def _get_user_id_from_request(data) -> int | None:
+    """從 JSON 或 Header 取得 user_id"""
+    # 先看 JSON body
+    uid = data.get("user_id")
+    if uid is None:
+        # 再看 header
+        uid = request.headers.get("X-User-Id")
+    try:
+        return int(uid) if uid is not None and str(uid).strip() != "" else None
+    except Exception:
+        return None
 
 
 @face_analysis_bp.route('/health', methods=['GET'])
@@ -146,6 +214,8 @@ def upload_and_analyze():
             }), 400
 
         data = request.get_json()
+        user_id = _get_user_id_from_request(data)
+        print(f"user_id = {user_id}")
         if not data or 'image' not in data:
             return jsonify({
                 "success": False,
@@ -285,61 +355,43 @@ def upload_and_analyze():
             # 寫入 face_analysis（逐區域一列）
             # =========================
             try:
+                # 只存異常；若你要「全部區域都存」，把下一行改成 all_region_results
                 area_map = result.get("region_results") or {}
                 now = datetime.utcnow()
 
-                import re
-
-                def _split_area_label(area: str) -> tuple[str, str]:
-                    """
-                    輸入字串像：
-                      "腎(生殖功能)"     → ("腎", "生殖功能")
-                      "鼻根(心與肝交會)" → ("鼻根", "心與肝交會")
-                      "下頰(腎(生殖功能))" → ("下頰", "腎(生殖功能)")
-                      "顴外"              → ("顴外", "")
-
-                    - 自動轉換全形括號（（ ））為半形
-                    - 只取「最外層」第一組括號，避免殘留 ")("
-                    """
-                    if not area:
-                        return "", ""
-
-                    # 全形括號轉半形
-                    s = area.strip().replace("（", "(").replace("）", ")")
-
-                    # 抓最外層第一組括號
-                    m = re.match(r'^([^()]+?)\s*\(([^()]*)\)', s)
-                    if not m:
-                        return s, ""
-
-                    base = m.group(1).strip()
-                    organ_raw = m.group(2).strip()
-
-                    # 如果 organ 裡還有括號（例如 "腎(生殖功能)"），再拆一次
-                    n = re.match(r'^([^()]+?)\s*\(([^()]*)\)', organ_raw)
-                    if n:
-                        organ = f"{n.group(1).strip()}({n.group(2).strip()})"
-                    else:
-                        organ = organ_raw
-
-                    return base, organ
-
-                rows = []
-                for area, status_str in area_map.items():
-                    face_val, organ_val = _split_area_label(area)
-                    status_val = (status_str or "未知")[:5]
-                    rows.append(FaceAnalysis(
-                        face=face_val,
-                        organ=organ_val,
-                        status=status_val,
-                        analysis_date=now
-                    ))
-
-                if rows:
+                if area_map:
                     with SessionLocal() as db:
-                        db.add_all(rows)
-                        db.commit()
-                        print(f"🗄️ Blueprint: face_analysis 已寫入 {len(rows)} 筆")
+                        face_map, organ_map, status_map = load_code_maps(db)
+
+                        rows = []
+                        for area, status_str in area_map.items():
+                            face_name, organ_name = split_area_label_exact(area)  # 精準拆分
+                            status_name = (status_str or "未知").strip()
+
+                            face_code = face_map.get(face_name)
+                            organ_code = organ_map.get(organ_name)
+                            status_code = status_map.get(status_name)
+
+                            # 找不到代碼時，採寬鬆回退策略並印出警告
+                            if not face_code:
+                                print(f"[warn] face 對不到 code_id：{face_name}")
+                            if not organ_code:
+                                print(f"[warn] organ 對不到 code_id：{organ_name}")
+                            if not status_code:
+                                print(f"[warn] status 對不到 code_id：{status_name}")
+
+                            rows.append(FaceAnalysis(
+                                user_id=user_id,
+                                face=face_code or face_name[:5],  # 先寫 code_id（字串）；對不到則寫名稱前 5 字
+                                organ=organ_code or organ_name[:5],
+                                status=status_code or status_name[:5],
+                                analysis_date=now
+                            ))
+
+                        if rows:
+                            db.add_all(rows)
+                            db.commit()
+                            print(f"🗄️ Blueprint: face_analysis 已寫入 {len(rows)} 筆（已轉成 sys_code code_id）")
                 else:
                     print("ℹ️ Blueprint: 本次沒有可寫入的區域資料。")
 
@@ -469,6 +521,8 @@ def detect_features():
     """專門的特徵檢測端點（只檢測，不分析膚色）"""
     try:
         data = request.get_json()
+        user_id = _get_user_id_from_request(data)
+        print(f"analyze_face user_id = {user_id}")
         base64_image = data.get('image')
 
         if not base64_image:

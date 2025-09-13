@@ -6,6 +6,7 @@ class FaceAnalysis(Base):
     __tablename__ = "face_analysis"
 
     fa_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=True)
 
     # 臉部區域名稱（建議至少 32，容納「右上頰（胃區）」這種複合描述）
     face = Column(String(32), nullable=False, comment="臉部區域")
