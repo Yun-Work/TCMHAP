@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE: str = "http://163.13.202.117:11434"
-    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_MODEL: str = "cwchang/llama-3-taiwan-8b-instruct"
     EMBED_MODEL: str = "mxbai-embed-large"
 
     CHUNK_SIZE: int = 1000
