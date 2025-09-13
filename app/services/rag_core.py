@@ -1,5 +1,16 @@
 # app/services/rag_core.py
 from __future__ import annotations
+
+__all__ = [
+    "normalize_text",
+    "clean_markdown",
+    "split_text_iter",
+    "embed_texts",
+    "add_documents",
+    "retrieve",
+    "generate_answer",
+]
+
 import uuid
 import re
 from typing import List, Dict, Iterator
@@ -9,18 +20,13 @@ import httpx
 from sqlalchemy import Column, String, Integer, DateTime, func, Index
 from sqlalchemy.orm import Session
 
-# ✅ 使用 MySQL 方言型別
-from sqlalchemy.dialects.mysql import LONGTEXT, JSON as MySQLJSON
-
-# 直接用 app.db（你的專案已存在）
 from app.db import Base, engine, SessionLocal
 
-# ------- settings 載入 -------
 from pathlib import Path
 import importlib.util
-import sys
 
 _APP = Path(__file__).resolve().parents[1]
+
 def _load_settings():
     for p in (_APP / "utils" / "config.py", _APP / "config.py"):
         if p.exists():
@@ -30,33 +36,39 @@ def _load_settings():
             spec.loader.exec_module(mod)
             return getattr(mod, "settings", getattr(mod, "Settings")())
     raise ImportError("找不到 settings，請確認 app/utils/config.py 或 app/config.py")
-settings = _load_settings()
 
-# ------- ORM -------
+try:
+    settings = _load_settings()
+except Exception as e:
+    class _Default:
+        LLM_PROVIDER = "ollama"
+        OLLAMA_BASE = "http://127.0.0.1:11434"
+        OLLAMA_MODEL = "llama3.2:3b-instruct"
+        EMBED_MODEL = "mxbai-embed-large"
+        OPENAI_API_KEY = None
+        OPENAI_MODEL = "gpt-4o-mini"
+    settings = _Default()
+    print(f"⚠️ rag_core: settings 載入失敗，改用預設值：{e}")
+
+from sqlalchemy.dialects.mysql import LONGTEXT, JSON as MySQLJSON
+
 class RagChunk(Base):
     __tablename__ = "rag_chunks"
-
     id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # 來源路徑可長，用前綴索引（見下方 Index）
     source = Column(String(1024), nullable=False)
     chunk_idx = Column(Integer, nullable=False, default=0)
-
-    # 🚩 關鍵修正：改用 LONGTEXT 避免 VARCHAR 長度限制
     text = Column(LONGTEXT, nullable=False)
-
-    # 🚩 在 MySQL 上使用原生 JSON
     embedding = Column(MySQLJSON, nullable=False)
-
     created_at = Column(DateTime, server_default=func.now())
 
-# 前綴索引，避免 InnoDB 索引長度限制
 Index("ix_rag_chunks_source", RagChunk.source, mysql_length=255)
 Index("ix_rag_chunks_idx", RagChunk.chunk_idx)
 
-# 建表（若已存在不會重建）
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"⚠️ rag_core: 建表略過（稍後初始化亦可），原因：{e}")
 
-# ------- 文本清理/切塊 -------
 _whitespace_re = re.compile(r"\s+")
 _md_symbol_re = re.compile(r"[#*`>\-\d\.]+")
 
@@ -85,19 +97,18 @@ def split_text_iter(text: str, chunk_size: int, overlap: int) -> Iterator[str]:
             next_start = end
         start = next_start
 
-# ------- Embeddings -------
+# ---------- Embeddings ----------
 async def embed_texts(texts: List[str]) -> List[List[float]]:
-    provider = (settings.LLM_PROVIDER or "ollama").lower()
-    cleaned = [clean_markdown(t) for t in texts if t and t.strip()]
+    provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
+    cleaned = [clean_markdown(t) for t in texts if t and str(t).strip()]
     if not cleaned:
         return []
 
     try:
         if provider == "openai":
-            headers = {
-                "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            }
+            if not getattr(settings, "OPENAI_API_KEY", None):
+                raise RuntimeError("缺少 OPENAI_API_KEY")
+            headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}
             payload = {"model": settings.EMBED_MODEL, "input": cleaned}
             async with httpx.AsyncClient(timeout=300) as client:
                 r = await client.post("https://api.openai.com/v1/embeddings", json=payload, headers=headers)
@@ -105,7 +116,7 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
                 data = r.json()
                 return [d["embedding"] for d in data["data"]]
 
-        # Ollama
+        # Ollama embeddings
         base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
         results: List[List[float]] = []
         async with httpx.AsyncClient(timeout=300) as client:
@@ -126,12 +137,10 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
     except Exception as e:
         raise RuntimeError(f"嵌入失敗：{e}") from e
 
-# ------- 資料寫入 -------
 def _session() -> Session:
     return SessionLocal()
 
 def add_documents(chunks: List[Dict]) -> int:
-    """chunks: [{'source','chunk','text','embedding'}]"""
     s = _session()
     inserted = 0
     try:
@@ -151,9 +160,8 @@ def add_documents(chunks: List[Dict]) -> int:
     finally:
         s.close()
 
-# ------- 檢索與生成 -------
-async def retrieve(query: str, top_k: int) -> List[Dict]:
-    """相似度排序檢索，回傳 [{text, metadata, score}]"""
+# ---------- Retrieve ----------
+async def retrieve(query: str, top_k: int = 4) -> List[Dict]:
     q_embs = await embed_texts([query])
     if not q_embs:
         return []
@@ -187,48 +195,96 @@ async def retrieve(query: str, top_k: int) -> List[Dict]:
 
     hits: List[Dict] = []
     for i in idx:
-        hits.append({
-            "text": texts[i],
-            "metadata": metas[i],
-            "score": float(sim[i]),
-        })
+        hits.append({"text": texts[i], "metadata": metas[i], "score": float(sim[i])})
     return hits
 
+# ---------- Generate (OpenAI or Ollama) ----------
 async def generate_answer(query: str, contexts: List[Dict]) -> str:
-    provider = (settings.LLM_PROVIDER or "ollama").lower()
-    context_block = "\n\n".join([normalize_text(c.get("text", "")) for c in contexts if c.get("text")])
+    """
+    根據 contexts 生成回答（繁中）。
+    - settings.LLM_PROVIDER == 'openai' → 用 OpenAI
+    - 其它（預設 'ollama'）          → 用 Ollama
+    若 Ollama 失敗且有 OPENAI_API_KEY，會自動回退到 OpenAI。
+    """
+    # 上下文預處理
+    TOTAL_BUDGET = 12000
+    PER_CHUNK_CAP = 2000
+
+    texts: List[str] = []
+    total = 0
+    for c in contexts or []:
+        t = normalize_text(c.get("text", ""))
+        if not t:
+            continue
+        if len(t) > PER_CHUNK_CAP:
+            t = t[:PER_CHUNK_CAP]
+        if total + len(t) > TOTAL_BUDGET:
+            break
+        texts.append(t)
+        total += len(t)
+
+    context_block = "\n\n".join(texts)
+
     system = (
         "你是一位臉色觀察與臟腑對應的助理。必須以繁體中文回答；"
         "若文件沒有直接答案，回覆「資料未明確指出」，並提供最接近的中醫方向。"
     )
     user = f"使用者問題：{query}\n\n（以下是文件內容，僅能依此作答）\n{context_block}"
 
-    if provider == "openai":
-        headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}
+    provider = (getattr(settings, "LLM_PROVIDER", "ollama") or "ollama").lower()
+
+    # ---- OpenAI 路徑 ----
+    async def _openai_call() -> str:
+        api_key = getattr(settings, "OPENAI_API_KEY", None)
+        if not api_key:
+            return ""
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {
-            "model": settings.OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "model": getattr(settings, "OPENAI_MODEL", "gpt-4o-mini"),
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
             "temperature": 0.2,
         }
         async with httpx.AsyncClient(timeout=300) as client:
             r = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-            r.raise_for_status()
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                print(f"rag_core: OpenAI API 錯誤：{e.response.status_code} {e.response.text[:800]}")
+                return ""
             data = r.json()
-            return data["choices"][0]["message"]["content"].strip()
+            return (data.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
 
-    base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
-    prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.2},
-    }
-    async with httpx.AsyncClient(timeout=300) as client:
-        r = await client.post(f"{base}/api/generate", json=payload)
-        r.raise_for_status()
-        data = r.json()
-        return (data.get("response") or "").strip()
+    # ---- Ollama 路徑 ----
+    async def _ollama_call() -> str:
+        base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
+        prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
+        options = {"temperature": 0.2, "num_predict": 512, "num_ctx": 4096}
+        payload = {
+            "model": getattr(settings, "OLLAMA_MODEL", "llama3.2"),
+            "prompt": prompt,
+            "stream": False,
+            "options": options,
+        }
+        print(f"rag_core: call Ollama generate model={payload['model']} ctx_chars={len(context_block)} base={base}")
+        async with httpx.AsyncClient(timeout=600) as client:
+            r = await client.post(f"{base}/api/generate", json=payload)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text
+                print(f"rag_core: Ollama /api/generate 錯誤 {e.response.status_code}: {body[:1000]}")
+                return ""
+            data = r.json()
+            return (data.get("response") or "").strip()
+
+    # 執行（依 provider）
+    if provider == "openai":
+        return await _openai_call()
+
+    # 預設：Ollama，失敗再回退到 OpenAI
+    txt = await _ollama_call()
+    if not txt:
+        fallback = await _openai_call()
+        return fallback or ""
+    return txt

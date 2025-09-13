@@ -4,8 +4,8 @@ import numpy as np
 from PIL import Image
 import base64
 import io
-# import insightface
-# import mediapipe as mp
+import insightface
+import mediapipe as mp
 from enum import Enum
 import json
 import warnings
@@ -44,7 +44,7 @@ except ImportError as e:
 
 class FaceRegion(Enum):
     FOREHEAD_UPPER = "額上1/3"  # 心
-    NOSE_BRIDGE_ROOT = "鼻根，心兼肝交會"  # 心（兼肝交會區）
+    NOSE_BRIDGE_ROOT = "鼻根(心與肝交會)"  # 心（兼肝交會區）
     CHEEK_UPPER_RIGHT = "右上頰"  # 肺
     # CHEEK_DUAL_UPPER = "雙頰"  # 肺
     NOSE_TIP = "鼻頭"  # 脾
@@ -58,9 +58,9 @@ class FaceRegion(Enum):
     # TEMPLE_TO_LOWER_CHEEK_LEFT = "太陽穴至下頰左"  # 腎
     # TEMPLE_TO_LOWER_CHEEK_RIGHT = "太陽穴至下頰右"  # 腎
     CHIN = "下巴"  # 腎區
-    LOWER_CHEEK = "下頰，腎"  # 腎（已合併）
+    LOWER_CHEEK = "下頰"  # 腎（已合併）
     PHILTRUM = "人中"  # 膀胱
-    EYE_WHITE = "氣輪，眼白"  # 肺
+    EYE_WHITE = "氣輪(眼白)"  # 肺
 
 
 class SkinCondition(Enum):
@@ -105,7 +105,7 @@ class FaceSkinAnalyzer:
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_LEFT: "腎",  # 太陽穴至下頰左
             # FaceRegion.TEMPLE_TO_LOWER_CHEEK_RIGHT: "腎",  # 太陽穴至下頰右
             FaceRegion.CHIN: "腎總區",  # 下巴
-            FaceRegion.LOWER_CHEEK: "生殖功能",  # 下頰，生殖功能（已合併）
+            FaceRegion.LOWER_CHEEK: "腎生殖功能",  # 下頰，生殖功能（已合併）
             FaceRegion.PHILTRUM: "膀胱",  # 人中
             FaceRegion.EYE_WHITE: "肺"  # 氣輪，眼白
         }

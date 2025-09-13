@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
 
     # Ollama
-    OLLAMA_BASE: str = "http://127.0.0.1:11434"
-    OLLAMA_MODEL: str = "llama3.1:8b"
+    OLLAMA_BASE: str = "http://163.13.202.117:11434"
+    OLLAMA_MODEL: str = "cwchang/llama-3-taiwan-8b-instruct"
     EMBED_MODEL: str = "mxbai-embed-large"
 
     CHUNK_SIZE: int = 1000

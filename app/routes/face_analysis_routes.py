@@ -1,10 +1,28 @@
-from flask import Blueprint, request, jsonify
-import traceback
+# app/routes/face_analysis_routes.py
 import base64
-import numpy as np
+import traceback
+from datetime import datetime
+from typing import Dict
+
+import re
 import cv2
+import numpy as np
+from flask import Blueprint, request, jsonify
+
 from app.db import SessionLocal
 from app.models.face_analysis_model import FaceAnalysis
+# ✅ 改為統一呼叫新的 RAG 服務（同步介面，內部自己處理 async）
+from app.services.region_advice_service import get_region_advice_batch as advise_for_regions
+
+# ✅ 要這一行（使用我們剛剛的 all-in-one 包裝）
+
+# 嘗試載入 RAG 服務檢查（僅供 /health 顯示用）
+try:
+    from app.services.rag_core import retrieve, generate_answer  # 若缺少不影響主流程
+    _rag_ready = True
+except Exception as _e:
+    print(f"⚠️ Blueprint: RAG 服務不可用：{_e}")
+    _rag_ready = False
 
 # 創建Blueprint
 face_analysis_bp = Blueprint('face_analysis', __name__)
@@ -16,7 +34,6 @@ mole_detection_service = None
 
 try:
     from app.services.facialskincoloranalysis_service import analyze_face_from_base64, FaceSkinAnalyzer
-
     analysis_service = analyze_face_from_base64
     print("✅ Blueprint: 成功導入分析服務")
 except ImportError as e:
@@ -24,19 +41,17 @@ except ImportError as e:
 
 try:
     from app.services.mole_detection_service import MoleDetectionService, remove_beard_from_image
-
     mole_detection_service = MoleDetectionService()
     print("✅ Blueprint: 成功導入痣檢測服務")
 except ImportError as e:
     print(f"⚠️ Blueprint: 痣檢測服務導入失敗: {e}")
 
 
-def base64_to_image(base64_string):
+def base64_to_image(base64_string: str):
     """將base64字符串轉換為OpenCV圖像"""
     try:
         if base64_string.startswith('data:image'):
             base64_string = base64_string.split(',')[1]
-
         image_data = base64.b64decode(base64_string)
         image_array = np.frombuffer(image_data, dtype=np.uint8)
         image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -46,7 +61,7 @@ def base64_to_image(base64_string):
         return None
 
 
-def image_to_base64(image):
+def image_to_base64(image) -> str | None:
     """將OpenCV圖像轉換為base64字符串"""
     try:
         _, buffer = cv2.imencode('.png', image, [cv2.IMWRITE_PNG_COMPRESSION, 6])
@@ -57,7 +72,7 @@ def image_to_base64(image):
         return None
 
 
-def detect_beard_features(image_data):
+def detect_beard_features(image_data: str) -> Dict:
     """檢測圖像中的鬍鬚特徵"""
     try:
         if not mole_detection_service:
@@ -69,18 +84,16 @@ def detect_beard_features(image_data):
 
         # 使用痣檢測服務來檢測鬍鬚
         has_beard, beards, _ = mole_detection_service.detect_beard_hair(image)
-
         return {
             'has_beard': has_beard,
             'beard_count': len(beards) if beards else 0
         }
-
     except Exception as e:
         print(f"鬍鬚檢測錯誤: {e}")
         return {'has_beard': False, 'beard_count': 0}
 
 
-def process_beard_removal(image_data):
+def process_beard_removal(image_data: str) -> str | None:
     """處理鬍鬚移除"""
     try:
         if not mole_detection_service:
@@ -90,14 +103,9 @@ def process_beard_removal(image_data):
         if image is None:
             return None
 
-        # 移除鬍鬚
         processed_image, beard_info = remove_beard_from_image(image)
-
-        # 將處理後的圖像轉換回base64
         processed_base64 = image_to_base64(processed_image)
-
         return processed_base64
-
     except Exception as e:
         print(f"鬍鬚移除錯誤: {e}")
         return None
@@ -109,7 +117,8 @@ def health_check():
         "status": "healthy",
         "analysis_service": analysis_service is not None,
         "diagnosis_service": diagnosis_service is not None,
-        "mole_detection_service": mole_detection_service is not None
+        "mole_detection_service": mole_detection_service is not None,
+        "rag_service": _rag_ready
     })
 
 
@@ -155,7 +164,7 @@ def upload_and_analyze():
 
         image_data = data['image']
         remove_moles = data.get('remove_moles', False)
-        remove_beard = data.get('remove_beard', False)  # 新增鬍鬚移除參數
+        remove_beard = data.get('remove_beard', False)
 
         print(f"🔷 Blueprint: 圖片數據長度: {len(image_data)}")
         print(f"🔷 Blueprint: 移除痣: {remove_moles}, 移除鬍鬚: {remove_beard}")
@@ -178,14 +187,12 @@ def upload_and_analyze():
                 "beard_analysis": None
             })
 
-        # 執行分析（使用新的分析器）
+        # 執行分析
         try:
             print("🚀 Blueprint: 開始分析...")
-
-            # 處理圖像預處理
             processed_image_data = image_data
 
-            # 如果需要移除鬍鬚，先處理鬍鬚
+            # 可選：鬍鬚移除
             if remove_beard:
                 print("🧔 Blueprint: 開始移除鬍鬚...")
                 beard_removed_image = process_beard_removal(image_data)
@@ -195,15 +202,13 @@ def upload_and_analyze():
                 else:
                     print("⚠️ Blueprint: 鬍鬚移除失敗，使用原始圖像")
 
-            # 使用FaceSkinAnalyzer的新方法
+            # 優先使用新分析器
             try:
                 analyzer = FaceSkinAnalyzer()
                 result = analyzer.analyze_from_base64(processed_image_data, remove_moles, remove_beard)
             except Exception as analyzer_error:
                 print(f"⚠️ Blueprint: 使用新分析器失敗，回退到舊分析器: {analyzer_error}")
-                # 回退到舊版本分析
                 result = analysis_service(processed_image_data)
-                # 手動添加痣和鬍鬚檢測相關欄位
                 result["has_moles"] = False
                 result["has_beard"] = False
                 result["mole_analysis"] = {"mole_count": 0, "total_moles": 0}
@@ -230,14 +235,22 @@ def upload_and_analyze():
                     "beard_analysis": None
                 })
 
-            # 如果沒有移除鬍鬚，檢測鬍鬚特徵
+            # 沒移除鬍鬚就做檢測
             beard_detection_result = {'has_beard': False, 'beard_count': 0}
             if not remove_beard:
                 print("🔍 Blueprint: 檢測鬍鬚特徵...")
                 beard_detection_result = detect_beard_features(image_data)
                 print(f"🧔 Blueprint: 鬍鬚檢測結果: {beard_detection_result}")
 
-            # 準備響應數據（包含新欄位）
+            # ✅ 取得逐區域建議（批次）：由新 service 封裝（三段式）
+            diagnosis_text, per_region_advices, advice_sources = advise_for_regions(
+                region_results=result.get("region_results", {}),
+                overall_color=result.get("overall_color"),
+                has_moles=result.get("has_moles", False),
+                has_beard=beard_detection_result.get("has_beard", False) if not remove_beard else False
+            )
+
+            # 準備響應數據
             response_data = {
                 "success": True,
                 "error": None,
@@ -245,73 +258,93 @@ def upload_and_analyze():
                 "overall_color": result.get("overall_color", None),
                 "all_region_results": result.get("all_region_results", {}),
                 "region_results": result.get("region_results", {}),
-                "diagnoses": {},
-                "diagnosis_text": "",
-
+                "diagnoses": per_region_advices,                # ← 每個區域一段建議（三段式）
+                "diagnosis_text": diagnosis_text,               # ← 拼接總結
                 # 痣檢測相關欄位
                 "has_moles": result.get("has_moles", False),
-                "mole_analysis": result.get("mole_analysis", {
-                    "mole_count": 0,
-                    "total_moles": 0
-                }),
+                "mole_analysis": result.get("mole_analysis", {"mole_count": 0, "total_moles": 0}),
                 "moles_removed": result.get("moles_removed", remove_moles),
-
-                # 新增：鬍鬚檢測相關欄位
+                # 鬍鬚檢測相關欄位
                 "has_beard": beard_detection_result['has_beard'] if not remove_beard else False,
                 "beard_analysis": {
                     "beard_count": beard_detection_result['beard_count'] if not remove_beard else 0,
                     "has_beard": beard_detection_result['has_beard'] if not remove_beard else False
                 },
                 "beard_removed": remove_beard,
-
-                # 圖片相關欄位
-                #"annotated_image": result.get("annotated_image"),
-                #"original_image": result.get("original_image"),
+                # 參考來源（前端需要可顯示）
+                "advice_sources": advice_sources,
             }
 
             print(f"📊 Blueprint: 響應數據準備完成")
             print(f"   - 異常區域: {response_data['abnormal_count']}")
             print(f"   - 檢測到痣: {response_data['has_moles']}")
             print(f"   - 檢測到鬍鬚: {response_data['has_beard']}")
-            print(f"   - 痣已移除: {response_data['moles_removed']}")
-            print(f"   - 鬍鬚已移除: {response_data['beard_removed']}")
+            print(f"   - 建議文字: {response_data['diagnosis_text'][:80]}{'...' if len(response_data['diagnosis_text'])>80 else ''}")
 
             # =========================
-            # 分析成功後，寫入 face_analysis 資料表
+            # 寫入 face_analysis（逐區域一列）
             # =========================
             try:
-                # 取得「異常器官」清單（region_results 已是只有異常）
-                abnormal_map = result.get("region_results") or {}
-                abnormal_organs = list(abnormal_map.keys())  # 例: ["肺","肝","胃"]
+                area_map = result.get("region_results") or {}
+                now = datetime.utcnow()
 
-                # 取得「正常器官」清單（用 all_region_results 扣掉異常），若沒有就存 None
-                all_map = result.get("all_region_results") or {}
-                normal_organs = None
-                if all_map:
-                    normal_organs = [k for k in all_map.keys() if k not in abnormal_map]
+                import re
 
-                # 從請求取得 user_id（沒有登入就存 None；可依你實作改來源）
-                raw_uid = request.headers.get("X-User-Id")  # 例如 App 端送上來
-                user_id = int(raw_uid) if raw_uid and raw_uid.isdigit() else None
+                def _split_area_label(area: str) -> tuple[str, str]:
+                    """
+                    輸入字串像：
+                      "腎(生殖功能)"     → ("腎", "生殖功能")
+                      "鼻根(心與肝交會)" → ("鼻根", "心與肝交會")
+                      "下頰(腎(生殖功能))" → ("下頰", "腎(生殖功能)")
+                      "顴外"              → ("顴外", "")
 
-                # 寫入 MySQL（organs/normal_organs 都是 JSON 欄位，直接塞 list）
-                if abnormal_organs or normal_organs:
+                    - 自動轉換全形括號（（ ））為半形
+                    - 只取「最外層」第一組括號，避免殘留 ")("
+                    """
+                    if not area:
+                        return "", ""
+
+                    # 全形括號轉半形
+                    s = area.strip().replace("（", "(").replace("）", ")")
+
+                    # 抓最外層第一組括號
+                    m = re.match(r'^([^()]+?)\s*\(([^()]*)\)', s)
+                    if not m:
+                        return s, ""
+
+                    base = m.group(1).strip()
+                    organ_raw = m.group(2).strip()
+
+                    # 如果 organ 裡還有括號（例如 "腎(生殖功能)"），再拆一次
+                    n = re.match(r'^([^()]+?)\s*\(([^()]*)\)', organ_raw)
+                    if n:
+                        organ = f"{n.group(1).strip()}({n.group(2).strip()})"
+                    else:
+                        organ = organ_raw
+
+                    return base, organ
+
+                rows = []
+                for area, status_str in area_map.items():
+                    face_val, organ_val = _split_area_label(area)
+                    status_val = (status_str or "未知")[:5]
+                    rows.append(FaceAnalysis(
+                        face=face_val,
+                        organ=organ_val,
+                        status=status_val,
+                        analysis_date=now
+                    ))
+
+                if rows:
                     with SessionLocal() as db:
-                        row = FaceAnalysis(
-                            user_id=user_id,
-                            organs=abnormal_organs if abnormal_organs else [],  # 至少存空陣列，避免 NULL
-                            normal_organs=normal_organs  # 允許 None
-                        )
-                        db.add(row)
+                        db.add_all(rows)
                         db.commit()
-                        print(f"🗄️ Blueprint: 已寫入 face_analysis，id={row.id}")
+                        print(f"🗄️ Blueprint: face_analysis 已寫入 {len(rows)} 筆")
                 else:
-                    print("ℹ️ Blueprint: 本次沒有可寫入的器官清單（異常/正常皆空）。")
+                    print("ℹ️ Blueprint: 本次沒有可寫入的區域資料。")
 
             except Exception as e:
-                # 寫庫失敗時只記錄，不阻擋 API 回傳
                 print(f"⚠️ Blueprint: 寫入 face_analysis 失敗：{e}")
-            # =========================
 
             return jsonify(response_data)
 
@@ -365,17 +398,15 @@ def analyze_face():
         data = request.get_json()
         base64_image = data.get('image')
         remove_moles = data.get('remove_moles', False)
-        remove_beard = data.get('remove_beard', False)  # 新增鬍鬚移除參數
+        remove_beard = data.get('remove_beard', False)
 
         if not base64_image:
             return jsonify({'success': False, 'error': '缺少圖像數據'}), 400
 
         print(f"🔍 analyze_face: 移除痣={remove_moles}, 移除鬍鬚={remove_beard}")
 
-        # 處理圖像預處理
         processed_image_data = base64_image
 
-        # 如果需要移除鬍鬚，先處理鬍鬚
         if remove_beard:
             print("🧔 analyze_face: 開始移除鬍鬚...")
             beard_removed_image = process_beard_removal(base64_image)
@@ -383,16 +414,14 @@ def analyze_face():
                 processed_image_data = beard_removed_image
                 print("✅ analyze_face: 鬍鬚移除完成")
 
-        # 嘗試使用新的分析器
+        # 嘗試新分析器
         try:
             analyzer = FaceSkinAnalyzer()
             result = analyzer.analyze_from_base64(processed_image_data, remove_moles, remove_beard)
         except Exception as e:
             print(f"❌ analyze_face: 新分析器執行失敗: {e}")
-            # 如果新分析器失敗，使用舊的分析方式
             if analysis_service:
                 result = analysis_service(processed_image_data)
-                # 手動添加痣和鬍鬚檢測相關欄位
                 result["has_moles"] = False
                 result["has_beard"] = False
                 result["mole_analysis"] = {"mole_count": 0, "total_moles": 0}
@@ -402,7 +431,7 @@ def analyze_face():
             else:
                 return jsonify({'success': False, 'error': '分析服務不可用'}), 500
 
-        # 如果沒有移除鬍鬚，檢測鬍鬚特徵
+        # 鬍鬚檢測
         if not remove_beard and result.get('success', False):
             beard_detection_result = detect_beard_features(base64_image)
             result["has_beard"] = beard_detection_result['has_beard']
@@ -414,8 +443,18 @@ def analyze_face():
             result["has_beard"] = False
             result["beard_analysis"] = {"beard_count": 0, "has_beard": False}
 
-        # 添加處理狀態標記
         result["beard_removed"] = remove_beard
+
+        # ✅ RAG 批次建議（三段式）
+        diagnosis_text, per_region_advices, advice_sources = advise_for_regions(
+            region_results=result.get("region_results", {}),
+            overall_color=result.get("overall_color"),
+            has_moles=result.get("has_moles", False),
+            has_beard=result.get("has_beard", False)
+        )
+        result["diagnosis_text"] = diagnosis_text
+        result["diagnoses"] = per_region_advices
+        result["advice_sources"] = advice_sources
 
         return jsonify(result)
 
