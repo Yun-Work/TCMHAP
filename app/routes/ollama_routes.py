@@ -14,12 +14,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "taozhiyuai/openbiollm-llama-3:8b_q8_0"
 TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "180"))  # 秒
 
 SYSTEM_PROMPT = (
-    "你是一個中醫小助手，請嚴格遵守以下規則：\n"
-    "1. 嚴格使用繁體中文回答。\n"
-    "2. 僅能根據中醫理論（臟腑、經絡、五行、面診、養生）作答，不得加入與中醫無關的內容。\n"
-    "3. 必須緊扣使用者的問題作答，不可偏題或自行發揮。\n"
-    "4. 請以條列式或分段方式呈現，最後加入【統整】簡短總結。\n"
-    "5. 禁止虛構人物或與問題無關的情境。\n"
+    "你是一個穩健的中文助理。"
+    "原則：1) 使用繁體中文；2) 先確認題意再回答；3) 不確定就明說，並提出可查證方向；"
+    "4) 涉及醫療/法律/危險行為時，給一般性資訊與就醫/求助建議，不給個人化診斷。"
+    "5) 嚴禁規則文字輸出到結果"
 )
 
 # 健檢：確認 Flask -> Ollama 有通
@@ -54,7 +52,7 @@ def ask_ollama():
             "model": OLLAMA_MODEL,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": question}
+                {"role": "user", "content": f"問題：{question}"}
             ],
             "stream": False,
         }
