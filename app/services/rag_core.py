@@ -42,7 +42,7 @@ try:
 except Exception as e:
     class _Default:
         LLM_PROVIDER = "ollama"
-        OLLAMA_BASE = "http://127.0.0.1:11434"
+        OLLAMA_BASE = "http://163.13.202.117:11434"
         OLLAMA_MODEL = "llama3.2:3b-instruct"
         EMBED_MODEL = "mxbai-embed-large"
         OPENAI_API_KEY = None
@@ -257,11 +257,11 @@ async def generate_answer(query: str, contexts: List[Dict]) -> str:
 
     # ---- Ollama 路徑 ----
     async def _ollama_call() -> str:
-        base = (getattr(settings, "OLLAMA_BASE", "http://127.0.0.1:11434") or "http://127.0.0.1:11434").rstrip("/")
+        base = (getattr(settings, "OLLAMA_BASE", "http://163.13.202.117:11434") or "http://127.0.0.1:11434").rstrip("/")
         prompt = f"System: {system}\n\nUser: {user}\nAssistant:"
         options = {"temperature": 0.2, "num_predict": 512, "num_ctx": 4096}
         payload = {
-            "model": getattr(settings, "OLLAMA_MODEL", "llama3.2"),
+            "model": getattr(settings, "OLLAMA_MODEL", "cwchang/llama-3-taiwan-8b-instruct:latest"),
             "prompt": prompt,
             "stream": False,
             "options": options,
