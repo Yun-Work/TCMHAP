@@ -10,7 +10,7 @@ ollama_bp = Blueprint("ollama", __name__)
 
 # ===== 可調整參數 =====
 OLLAMA_BASE = os.getenv("OLLAMA_BASE", "http://163.13.202.117:11434")  # 你的 Ollama 伺服器
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "taozhiyuai/openbiollm-llama-3:8b_q8_0")  # 模型名
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "cwchang/llama-3-taiwan-8b-instruct:latest")  # 模型名
 TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "180"))  # 秒
 
 SYSTEM_PROMPT = (
